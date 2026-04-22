@@ -1,6 +1,5 @@
 import { html, css, LitElement } from '../assets/lit-core-2.7.4.min.js';
 import './stt/SttView.js';
-import './summary/SummaryView.js';
 
 export class ListenView extends LitElement {
     static styles = css`

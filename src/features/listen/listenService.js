@@ -1,15 +1,23 @@
 const { BrowserWindow } = require('electron');
 const SttService = require('./stt/sttService');
-const SummaryService = require('./summary/summaryService');
 const authService = require('../common/services/authService');
 const sessionRepository = require('../common/repositories/session');
 const sttRepository = require('./stt/repositories');
 const internalBridge = require('../../bridge/internalBridge');
 
+const noopSummary = {
+    setCallbacks() {},
+    setSessionId() {},
+    resetConversationHistory() {},
+    addConversationTurn() {},
+    getConversationHistory() { return []; },
+    getCurrentAnalysisData() { return null; },
+};
+
 class ListenService {
     constructor() {
         this.sttService = new SttService();
-        this.summaryService = new SummaryService();
+        this.summaryService = noopSummary;
         this.currentSessionId = null;
         this.isInitializingSession = false;
 
@@ -18,20 +26,9 @@ class ListenService {
     }
 
     setupServiceCallbacks() {
-        // STT service callbacks
         this.sttService.setCallbacks({
             onTranscriptionComplete: (speaker, text) => {
                 this.handleTranscriptionComplete(speaker, text);
-            },
-            onStatusUpdate: (status) => {
-                this.sendToRenderer('update-status', status);
-            }
-        });
-
-        // Summary service callbacks
-        this.summaryService.setCallbacks({
-            onAnalysisComplete: (data) => {
-                console.log('📊 Analysis completed:', data);
             },
             onStatusUpdate: (status) => {
                 this.sendToRenderer('update-status', status);

@@ -14,7 +14,6 @@ if (require('electron-squirrel-startup')) {
 const { app, BrowserWindow, shell, ipcMain, dialog, desktopCapturer, session } = require('electron');
 const { createWindows } = require('./window/windowManager.js');
 const listenService = require('./features/listen/listenService');
-const { initializeFirebase } = require('./features/common/services/firebaseClient');
 const databaseInitializer = require('./features/common/services/databaseInitializer');
 const authService = require('./features/common/services/authService');
 const path = require('node:path');
@@ -32,15 +31,9 @@ const windowBridge = require('./bridge/windowBridge');
 // Global variables
 const eventBridge = new EventEmitter();
 let WEB_PORT = 3000;
-let isShuttingDown = false; // Flag to prevent infinite shutdown loop
+let isShuttingDown = false;
 
-//////// after_modelStateService ////////
 global.modelStateService = modelStateService;
-//////// after_modelStateService ////////
-
-// Import and initialize OllamaService
-const ollamaService = require('./features/common/services/ollamaService');
-const ollamaModelRepository = require('./features/common/repositories/ollamaModel');
 
 // Native deep link handling - cross-platform compatible
 let pendingDeepLinkUrl = null;
@@ -182,40 +175,18 @@ app.whenReady().then(async () => {
         });
     });
 
-    // Initialize core services
-    initializeFirebase();
-    
     try {
         await databaseInitializer.initialize();
         console.log('>>> [index.js] Database initialized successfully');
-        
-        // Clean up zombie sessions from previous runs first - MOVED TO authService
-        // sessionRepository.endAllActiveSessions();
 
         await authService.initialize();
 
-        //////// after_modelStateService ////////
         await modelStateService.initialize();
-        //////// after_modelStateService ////////
 
-        featureBridge.initialize();  // 추가: featureBridge 초기화
+        featureBridge.initialize();
         windowBridge.initialize();
         setupWebDataHandlers();
 
-        // Initialize Ollama models in database
-        await ollamaModelRepository.initializeDefaultModels();
-
-        // Auto warm-up selected Ollama model in background (non-blocking)
-        setTimeout(async () => {
-            try {
-                console.log('[index.js] Starting background Ollama model warm-up...');
-                await ollamaService.autoWarmUpSelectedModel();
-            } catch (error) {
-                console.log('[index.js] Background warm-up failed (non-critical):', error.message);
-            }
-        }, 2000); // Wait 2 seconds after app start
-
-        // Start web server and create windows ONLY after all initializations are successful
         WEB_PORT = await startWebStack();
         console.log('Web front-end listening on', WEB_PORT);
         
@@ -257,38 +228,19 @@ app.on('before-quit', async (event) => {
     event.preventDefault();
     
     try {
-        // 1. Stop audio capture first (immediate)
+        // 1. Stop audio capture first
         await listenService.closeSession();
         console.log('[Shutdown] Audio capture stopped');
-        
-        // 2. End all active sessions (database operations) - with error handling
+
+        // 2. End all active sessions
         try {
             await sessionRepository.endAllActiveSessions();
             console.log('[Shutdown] Active sessions ended');
         } catch (dbError) {
-            console.warn('[Shutdown] Could not end active sessions (database may be closed):', dbError.message);
+            console.warn('[Shutdown] Could not end active sessions:', dbError.message);
         }
-        
-        // 3. Shutdown Ollama service (potentially time-consuming)
-        console.log('[Shutdown] shutting down Ollama service...');
-        const ollamaShutdownSuccess = await Promise.race([
-            ollamaService.shutdown(false), // Graceful shutdown
-            new Promise(resolve => setTimeout(() => resolve(false), 8000)) // 8s timeout
-        ]);
-        
-        if (ollamaShutdownSuccess) {
-            console.log('[Shutdown] Ollama service shut down gracefully');
-        } else {
-            console.log('[Shutdown] Ollama shutdown timeout, forcing...');
-            // Force shutdown if graceful failed
-            try {
-                await ollamaService.shutdown(true);
-            } catch (forceShutdownError) {
-                console.warn('[Shutdown] Force shutdown also failed:', forceShutdownError.message);
-            }
-        }
-        
-        // 4. Close database connections (final cleanup)
+
+        // 3. Close database connections
         try {
             databaseInitializer.close();
             console.log('[Shutdown] Database connections closed');
@@ -317,7 +269,6 @@ app.on('activate', () => {
 function setupWebDataHandlers() {
     const sessionRepository = require('./features/common/repositories/session');
     const sttRepository = require('./features/listen/stt/repositories');
-    const summaryRepository = require('./features/listen/summary/repositories');
     const askRepository = require('./features/ask/repositories');
     const userRepository = require('./features/common/repositories/user');
     const presetRepository = require('./features/common/repositories/preset');
@@ -338,12 +289,11 @@ function setupWebDataHandlers() {
                         result = null;
                         break;
                     }
-                    const [transcripts, ai_messages, summary] = await Promise.all([
+                    const [transcripts, ai_messages] = await Promise.all([
                         sttRepository.getAllTranscriptsBySessionId(payload),
-                        askRepository.getAllAiMessagesBySessionId(payload),
-                        summaryRepository.getSummaryBySessionId(payload)
+                        askRepository.getAllAiMessagesBySessionId(payload)
                     ]);
-                    result = { session, transcripts, ai_messages, summary };
+                    result = { session, transcripts, ai_messages, summary: null };
                     break;
                 case 'delete-session':
                     result = await sessionRepository.deleteWithRelatedData(payload);

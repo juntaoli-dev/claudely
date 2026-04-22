@@ -1,7 +1,11 @@
 const { BrowserWindow } = require('electron');
 const { spawn } = require('child_process');
-const { createSTT } = require('../../common/ai/factory');
 const modelStateService = require('../../common/services/modelStateService');
+
+// createSTT stub: real Deepgram wiring lands in Phase 3.
+function createSTT() {
+    throw new Error('STT provider wired in Phase 3 (Deepgram via AudioBus).');
+}
 
 const COMPLETION_DEBOUNCE_MS = 2000;
 

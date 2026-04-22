@@ -94,10 +94,10 @@ Electron main is the hub. Swift helpers are dumb pipes, kept in Swift because SC
 
 ### Electron main (TypeScript)
 
-- `AudioBus`: spawns audio-capture, demuxes tracks, streams to Deepgram WS with `diarize=true, multichannel=true`.
-- `TranscriptStore`: rolling 60 min diarized transcript in memory. Flushes to `~/Library/Application Support/Claudely/transcripts/<meeting-ts>.jsonl` on exit.
+- `AudioBus`: spawns audio-capture, demuxes the two PCM tracks, streams to Deepgram WS with `diarize=true, multichannel=true`. Channel 0 = meeting audio (diarized into speakers A/B/C…), channel 1 = user's mic (always labelled `me`).
+- `TranscriptStore`: rolling 60 min diarized transcript in memory, ring buffer drops oldest on overflow. Appends every final line to `~/Library/Application Support/Claudely/transcripts/<meeting-ts>.jsonl` incrementally so a crash loses at most the last unflushed line.
 - `ClassifierBus`: spawns classifier, pushes each Deepgram-final utterance to classifier stdin. On `addressed: true` AND auto-answer ON, fires. Always fires if utterance starts with a wake phrase.
-- `ClaudeSession`: single long-lived Claude Agent SDK session. `cwd = ~/Documents/creative_studio_repo/`. Permissions: `Read, Grep, Glob, Bash(fd *), WebFetch`. Explicitly no `Edit/Write` (read-only during meetings).
+- `ClaudeSession`: single long-lived Claude Agent SDK session. `cwd = ~/Documents/creative_studio_repo/`, which is a parent folder containing multiple Alli sub-repos (backend, frontend, infra, etc., see user's `~/.claude/CLAUDE.md`). Claude can grep across all of them. Permissions: `Read, Grep, Glob, Bash(fd *), WebFetch`. Explicitly no `Edit/Write` (read-only during meetings).
 - `ScreenGrabber`: on fire, captures current screen PNG via Electron `desktopCapturer`.
 - `FireDispatcher`: packages `{image, transcript_tail_30s, question}` as a Claude user turn, streams tokens back to the renderer.
 

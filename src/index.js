@@ -41,15 +41,15 @@ let pendingDeepLinkUrl = null;
 function setupProtocolHandling() {
     // Protocol registration - must be done before app is ready
     try {
-        if (!app.isDefaultProtocolClient('pickleglass')) {
-            const success = app.setAsDefaultProtocolClient('pickleglass');
+        if (!app.isDefaultProtocolClient('claudely')) {
+            const success = app.setAsDefaultProtocolClient('claudely');
             if (success) {
-                console.log('[Protocol] Successfully set as default protocol client for pickleglass://');
+                console.log('[Protocol] Successfully set as default protocol client for claudely://');
             } else {
                 console.warn('[Protocol] Failed to set as default protocol client - this may affect deep linking');
             }
         } else {
-            console.log('[Protocol] Already registered as default protocol client for pickleglass://');
+            console.log('[Protocol] Already registered as default protocol client for claudely://');
         }
     } catch (error) {
         console.error('[Protocol] Error during protocol registration:', error);
@@ -65,7 +65,7 @@ function setupProtocolHandling() {
         
         // Search through all command line arguments for a valid protocol URL
         for (const arg of commandLine) {
-            if (arg && typeof arg === 'string' && arg.startsWith('pickleglass://')) {
+            if (arg && typeof arg === 'string' && arg.startsWith('claudely://')) {
                 // Clean up the URL by removing problematic characters
                 const cleanUrl = arg.replace(/[\\₩]/g, '');
                 
@@ -97,7 +97,7 @@ function setupProtocolHandling() {
         event.preventDefault();
         console.log('[Protocol] Received URL via open-url:', url);
         
-        if (!url || !url.startsWith('pickleglass://')) {
+        if (!url || !url.startsWith('claudely://')) {
             console.warn('[Protocol] Invalid URL format:', url);
             return;
         }
@@ -138,7 +138,7 @@ function focusMainWindow() {
 
 if (process.platform === 'win32') {
     for (const arg of process.argv) {
-        if (arg && typeof arg === 'string' && arg.startsWith('pickleglass://')) {
+        if (arg && typeof arg === 'string' && arg.startsWith('claudely://')) {
             // Clean up the URL by removing problematic characters (korean characters issue...)
             const cleanUrl = arg.replace(/[\\₩]/g, '');
             
@@ -399,7 +399,7 @@ async function handleCustomUrl(url) {
         console.log('[Custom URL] Processing URL:', url);
         
         // Validate and clean URL
-        if (!url || typeof url !== 'string' || !url.startsWith('pickleglass://')) {
+        if (!url || typeof url !== 'string' || !url.startsWith('claudely://')) {
             console.error('[Custom URL] Invalid URL format:', url);
             return;
         }
@@ -458,7 +458,7 @@ async function handleFirebaseAuthCallback(params) {
     console.log('[Auth] Received ID token from deep link, exchanging for custom token...');
 
     try {
-        const functionUrl = 'https://us-west1-pickle-3651a.cloudfunctions.net/pickleGlassAuthCallback';
+        const functionUrl = 'https://us-west1-pickle-3651a.cloudfunctions.net/pickleClaudelyAuthCallback';
         const response = await fetch(functionUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -557,22 +557,22 @@ async function startWebStack() {
 
   console.log(`🔧 Allocated ports: API=${apiPort}, Frontend=${frontendPort}`);
 
-  process.env.pickleglass_API_PORT = apiPort.toString();
-  process.env.pickleglass_API_URL = `http://localhost:${apiPort}`;
-  process.env.pickleglass_WEB_PORT = frontendPort.toString();
-  process.env.pickleglass_WEB_URL = `http://localhost:${frontendPort}`;
+  process.env.claudely_API_PORT = apiPort.toString();
+  process.env.claudely_API_URL = `http://localhost:${apiPort}`;
+  process.env.claudely_WEB_PORT = frontendPort.toString();
+  process.env.claudely_WEB_URL = `http://localhost:${frontendPort}`;
 
   console.log(`🌍 Environment variables set:`, {
-    pickleglass_API_URL: process.env.pickleglass_API_URL,
-    pickleglass_WEB_URL: process.env.pickleglass_WEB_URL
+    claudely_API_URL: process.env.claudely_API_URL,
+    claudely_WEB_URL: process.env.claudely_WEB_URL
   });
 
-  const createBackendApp = require('../pickleglass_web/backend_node');
+  const createBackendApp = require('../web/backend_node');
   const nodeApi = createBackendApp(eventBridge);
 
   const staticDir = app.isPackaged
     ? path.join(process.resourcesPath, 'out')
-    : path.join(__dirname, '..', 'pickleglass_web', 'out');
+    : path.join(__dirname, '..', 'web', 'out');
 
   const fs = require('fs');
 
@@ -580,7 +580,7 @@ async function startWebStack() {
     console.error(`============================================================`);
     console.error(`[ERROR] Frontend build directory not found!`);
     console.error(`Path: ${staticDir}`);
-    console.error(`Please run 'npm run build' inside the 'pickleglass_web' directory first.`);
+    console.error(`Please run 'npm run build' inside the 'web' directory first.`);
     console.error(`============================================================`);
     app.quit();
     return;
@@ -661,7 +661,7 @@ async function initAutoUpdater() {
             dialog.showMessageBox({
                 type: 'info',
                 title: 'Application Update',
-                message: `A new version of PickleGlass (${releaseName}) has been downloaded. It will be installed the next time you launch the application.`,
+                message: `A new version of PickleClaudely (${releaseName}) has been downloaded. It will be installed the next time you launch the application.`,
                 buttons: ['Restart', 'Later']
             }).then(response => {
                 if (response.response === 0) {

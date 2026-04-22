@@ -574,7 +574,7 @@ export class PermissionHeader extends LitElement {
                             class="continue-button" 
                             @click=${this.handleContinue}
                         >
-                            Continue to Pickle Glass
+                            Continue to Pickle Claudely
                         </button>
                     `}
                 </div>

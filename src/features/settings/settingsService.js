@@ -8,7 +8,7 @@ const { getStoredApiKey, getStoredProvider, windowPool } = require('../../window
 const modelStateService = require('../common/services/modelStateService');
 
 const store = new Store({
-    name: 'pickle-glass-settings',
+    name: 'claudely-settings',
     defaults: {
         users: {}
     }

@@ -8,8 +8,8 @@ const internalBridge = require('../bridge/internalBridge');
 const permissionRepository = require('../features/common/repositories/permission');
 
 /* ────────────────[ GLASS BYPASS ]─────────────── */
-let liquidGlass;
-const isLiquidGlassSupported = () => {
+let liquidClaudely;
+const isLiquidClaudelySupported = () => {
     if (process.platform !== 'darwin') {
         return false;
     }
@@ -17,13 +17,13 @@ const isLiquidGlassSupported = () => {
     // return majorVersion >= 25; // macOS 26+ (Darwin 25+)
     return majorVersion >= 26; // See you soon!
 };
-let shouldUseLiquidGlass = isLiquidGlassSupported();
-if (shouldUseLiquidGlass) {
+let shouldUseLiquidClaudely = isLiquidClaudelySupported();
+if (shouldUseLiquidClaudely) {
     try {
-        liquidGlass = require('electron-liquid-glass');
+        liquidClaudely = require('electron-liquid-glass');
     } catch (e) {
         console.warn('Could not load optional dependency "electron-liquid-glass". The feature will be disabled.');
-        shouldUseLiquidGlass = false;
+        shouldUseLiquidClaudely = false;
     }
 }
 /* ────────────────[ GLASS BYPASS ]─────────────── */
@@ -425,7 +425,7 @@ const toggleContentProtection = () => {
 
 
 const openLoginPage = () => {
-    const webUrl = process.env.pickleglass_WEB_URL || 'http://localhost:3000';
+    const webUrl = process.env.claudely_WEB_URL || 'http://localhost:3000';
     const personalizeUrl = `${webUrl}/personalize?desktop=true`;
     shell.openExternal(personalizeUrl);
     console.log('Opening personalization page:', personalizeUrl);
@@ -467,18 +467,18 @@ function createFeatureWindows(header, namesToCreate) {
                     listen.setWindowButtonVisibility(false);
                 }
                 const listenLoadOptions = { query: { view: 'listen' } };
-                if (!shouldUseLiquidGlass) {
+                if (!shouldUseLiquidClaudely) {
                     listen.loadFile(path.join(__dirname, '../ui/app/content.html'), listenLoadOptions);
                 }
                 else {
                     listenLoadOptions.query.glass = 'true';
                     listen.loadFile(path.join(__dirname, '../ui/app/content.html'), listenLoadOptions);
                     listen.webContents.once('did-finish-load', () => {
-                        const viewId = liquidGlass.addView(listen.getNativeWindowHandle());
+                        const viewId = liquidClaudely.addView(listen.getNativeWindowHandle());
                         if (viewId !== -1) {
-                            liquidGlass.unstable_setVariant(viewId, liquidGlass.GlassMaterialVariant.bubbles);
-                            // liquidGlass.unstable_setScrim(viewId, 1);
-                            // liquidGlass.unstable_setSubdued(viewId, 1);
+                            liquidClaudely.unstable_setVariant(viewId, liquidClaudely.ClaudelyMaterialVariant.bubbles);
+                            // liquidClaudely.unstable_setScrim(viewId, 1);
+                            // liquidClaudely.unstable_setSubdued(viewId, 1);
                         }
                     });
                 }
@@ -498,18 +498,18 @@ function createFeatureWindows(header, namesToCreate) {
                     ask.setWindowButtonVisibility(false);
                 }
                 const askLoadOptions = { query: { view: 'ask' } };
-                if (!shouldUseLiquidGlass) {
+                if (!shouldUseLiquidClaudely) {
                     ask.loadFile(path.join(__dirname, '../ui/app/content.html'), askLoadOptions);
                 }
                 else {
                     askLoadOptions.query.glass = 'true';
                     ask.loadFile(path.join(__dirname, '../ui/app/content.html'), askLoadOptions);
                     ask.webContents.once('did-finish-load', () => {
-                        const viewId = liquidGlass.addView(ask.getNativeWindowHandle());
+                        const viewId = liquidClaudely.addView(ask.getNativeWindowHandle());
                         if (viewId !== -1) {
-                            liquidGlass.unstable_setVariant(viewId, liquidGlass.GlassMaterialVariant.bubbles);
-                            // liquidGlass.unstable_setScrim(viewId, 1);
-                            // liquidGlass.unstable_setSubdued(viewId, 1);
+                            liquidClaudely.unstable_setVariant(viewId, liquidClaudely.ClaudelyMaterialVariant.bubbles);
+                            // liquidClaudely.unstable_setScrim(viewId, 1);
+                            // liquidClaudely.unstable_setSubdued(viewId, 1);
                         }
                     });
                 }
@@ -531,7 +531,7 @@ function createFeatureWindows(header, namesToCreate) {
                     settings.setWindowButtonVisibility(false);
                 }
                 const settingsLoadOptions = { query: { view: 'settings' } };
-                if (!shouldUseLiquidGlass) {
+                if (!shouldUseLiquidClaudely) {
                     settings.loadFile(path.join(__dirname,'../ui/app/content.html'), settingsLoadOptions)
                         .catch(console.error);
                 }
@@ -540,11 +540,11 @@ function createFeatureWindows(header, namesToCreate) {
                     settings.loadFile(path.join(__dirname,'../ui/app/content.html'), settingsLoadOptions)
                         .catch(console.error);
                     settings.webContents.once('did-finish-load', () => {
-                        const viewId = liquidGlass.addView(settings.getNativeWindowHandle());
+                        const viewId = liquidClaudely.addView(settings.getNativeWindowHandle());
                         if (viewId !== -1) {
-                            liquidGlass.unstable_setVariant(viewId, liquidGlass.GlassMaterialVariant.bubbles);
-                            // liquidGlass.unstable_setScrim(viewId, 1);
-                            // liquidGlass.unstable_setSubdued(viewId, 1);
+                            liquidClaudely.unstable_setVariant(viewId, liquidClaudely.ClaudelyMaterialVariant.bubbles);
+                            // liquidClaudely.unstable_setScrim(viewId, 1);
+                            // liquidClaudely.unstable_setSubdued(viewId, 1);
                         }
                     });
                 }
@@ -574,15 +574,15 @@ function createFeatureWindows(header, namesToCreate) {
                 }
 
                 const loadOptions = { query: { view: 'shortcut-settings' } };
-                if (!shouldUseLiquidGlass) {
+                if (!shouldUseLiquidClaudely) {
                     shortcutEditor.loadFile(path.join(__dirname, '../ui/app/content.html'), loadOptions);
                 } else {
                     loadOptions.query.glass = 'true';
                     shortcutEditor.loadFile(path.join(__dirname, '../ui/app/content.html'), loadOptions);
                     shortcutEditor.webContents.once('did-finish-load', () => {
-                        const viewId = liquidGlass.addView(shortcutEditor.getNativeWindowHandle());
+                        const viewId = liquidClaudely.addView(shortcutEditor.getNativeWindowHandle());
                         if (viewId !== -1) {
-                            liquidGlass.unstable_setVariant(viewId, liquidGlass.GlassMaterialVariant.bubbles);
+                            liquidClaudely.unstable_setVariant(viewId, liquidClaudely.ClaudelyMaterialVariant.bubbles);
                         }
                     });
                 }
@@ -680,18 +680,18 @@ function createWindows() {
         header.setWindowButtonVisibility(false);
     }
     const headerLoadOptions = {};
-    if (!shouldUseLiquidGlass) {
+    if (!shouldUseLiquidClaudely) {
         header.loadFile(path.join(__dirname, '../ui/app/header.html'), headerLoadOptions);
     }
     else {
         headerLoadOptions.query = { glass: 'true' };
         header.loadFile(path.join(__dirname, '../ui/app/header.html'), headerLoadOptions);
         header.webContents.once('did-finish-load', () => {
-            const viewId = liquidGlass.addView(header.getNativeWindowHandle());
+            const viewId = liquidClaudely.addView(header.getNativeWindowHandle());
             if (viewId !== -1) {
-                liquidGlass.unstable_setVariant(viewId, liquidGlass.GlassMaterialVariant.bubbles);
-                // liquidGlass.unstable_setScrim(viewId, 1); 
-                // liquidGlass.unstable_setSubdued(viewId, 1);
+                liquidClaudely.unstable_setVariant(viewId, liquidClaudely.ClaudelyMaterialVariant.bubbles);
+                // liquidClaudely.unstable_setScrim(viewId, 1); 
+                // liquidClaudely.unstable_setSubdued(viewId, 1);
             }
         });
     }

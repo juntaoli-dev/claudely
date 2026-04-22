@@ -229,10 +229,10 @@ const SidebarComponent = ({ isCollapsed, onToggle, onSearchClick }: SidebarProps
                 ariaLabel: 'Download Pickle Camera (new window)',
             },
             {
-                href: 'hhttps://www.dropbox.com/scl/fi/znid09apxiwtwvxer6oc9/Glass_latest.dmg?rlkey=gwvvyb3bizkl25frhs4k1zwds&st=37q31b4w&dl=1',
+                href: 'hhttps://www.dropbox.com/scl/fi/znid09apxiwtwvxer6oc9/Claudely_latest.dmg?rlkey=gwvvyb3bizkl25frhs4k1zwds&st=37q31b4w&dl=1',
                 icon: '/download.svg',
-                text: 'Download Pickle Glass',
-                ariaLabel: 'Download Pickle Glass (new window)',
+                text: 'Download Pickle Claudely',
+                ariaLabel: 'Download Pickle Claudely (new window)',
             },
         ],
         []
@@ -498,7 +498,7 @@ const SidebarComponent = ({ isCollapsed, onToggle, onSearchClick }: SidebarProps
                         <Link href="https://pickle.com" target="_blank" rel="noopener noreferrer" className="flex items-center">
                             <Image
                                 src={isCollapsed ? '/symbol.svg' : '/word.svg'}
-                                alt="pickleglass Logo"
+                                alt="claudely Logo"
                                 width={50}
                                 height={14}
                                 className="mx-3 shrink-0"

@@ -192,6 +192,30 @@ class ShortcutsService {
             });
         });
 
+        // --- Claudely global shortcuts: auto-answer toggle + panic mute. ---
+        const config = require('../common/config/config');
+        const listenService = require('../listen/listenService');
+        globalShortcut.register(`${modifier}+Shift+A`, () => {
+            const cur = !!config.get('autoAnswer');
+            const next = !cur;
+            config.set('autoAnswer', next);
+            console.log(`[Shortcuts] autoAnswer → ${next}`);
+            this.windowPool.forEach(win => {
+                if (win && !win.isDestroyed()) {
+                    try { win.webContents.send('state:update', { type: 'autoAnswer', value: next }); } catch (_) {}
+                }
+            });
+        });
+        globalShortcut.register(`${modifier}+Shift+M`, () => {
+            console.log('[Shortcuts] panic mute');
+            this.windowPool.forEach(win => {
+                if (win && !win.isDestroyed()) {
+                    try { win.webContents.send('state:update', { type: 'panicMute' }); } catch (_) {}
+                }
+            });
+            Promise.resolve(listenService.closeSession?.()).catch(() => {});
+        });
+
         // --- User-configurable shortcuts ---
         if (header?.currentHeaderState === 'apikey') {
             if (keybinds.toggleVisibility) {

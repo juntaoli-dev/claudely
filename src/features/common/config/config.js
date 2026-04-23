@@ -29,7 +29,15 @@ class Config {
             enableSQLiteStorage: true,
             
             logLevel: 'info',
-            enableDebugLogging: false
+            enableDebugLogging: false,
+
+            // Claudely runtime config
+            autoAnswer: false,
+            wakePhrases: ['hey claude', 'hey claudely'],
+            projectCwd: path.join(os.homedir(), 'Documents/creative_studio_repo'),
+            deepgramApiKey: '',
+            model: 'claude-sonnet-4-6',
+            zoomBundleId: 'us.zoom.xos',
         };
         
         this.config = { ...this.defaults };

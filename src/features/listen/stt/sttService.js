@@ -9,6 +9,10 @@ const path = require('path');
 const os = require('os');
 const { AudioBus } = require('../../audio/audioBus');
 const { TranscriptStore } = require('../transcriptStore');
+const { ClassifierBus } = require('../../classify/classifierBus');
+const { matchWake } = require('../../classify/wakePhrase');
+const { FireDispatcher } = require('../../fire/fireDispatcher');
+const config = require('../../common/config/config');
 
 function start({ onFinal, onInterim, onState } = {}) {
     const key = process.env.DEEPGRAM_API_KEY;
@@ -22,8 +26,16 @@ function start({ onFinal, onInterim, onState } = {}) {
     const store = new TranscriptStore({ maxMinutes: 60, persistPath });
 
     const binaryPath = path.join(__dirname, '../../../ui/assets/bin/audio-capture');
-    const bundleId = process.env.CLAUDELY_ZOOM_BUNDLE_ID || 'us.zoom.xos';
+    const bundleId = process.env.CLAUDELY_ZOOM_BUNDLE_ID || config.get('zoomBundleId') || 'us.zoom.xos';
     const bus = new AudioBus({ binaryPath, bundleId });
+
+    // Classifier + FireDispatcher are constructed here so a single listen session
+    // owns the full pipeline. Phase 5 replaces the FireDispatcher stub with the
+    // real queue + wake-phrase + auto-answer gated dispatcher.
+    const classifierPath = path.join(__dirname, '../../../ui/assets/bin/classifier');
+    const classifier = new ClassifierBus({ binaryPath: classifierPath });
+    classifier.start();
+    const fireDispatcher = new FireDispatcher({ store: null, classifier, config, onState });
 
     let live = null;
     let liveReady = false;
@@ -76,6 +88,32 @@ function start({ onFinal, onInterim, onState } = {}) {
             if (payload.is_final) {
                 store.append(line);
                 onFinal?.(line);
+
+                // Phase 4: every final line gets passed through the dispatcher.
+                // Wake-phrase always fires. If auto-answer is on, classifier
+                // verdict fires. FireDispatcher stub no-ops until Phase 5.
+                Promise.resolve().then(async () => {
+                    try {
+                        const wake = matchWake(line.text, config.get('wakePhrases'));
+                        if (wake) {
+                            onState?.({ type: 'fired', reason: 'wake', question: wake });
+                            if (typeof fireDispatcher.maybeFire === 'function') {
+                                await fireDispatcher.maybeFire(line);
+                            }
+                            return;
+                        }
+                        if (!config.get('autoAnswer')) return;
+                        const verdict = await classifier.classify(line.text);
+                        if (verdict.addressed) {
+                            onState?.({ type: 'fired', reason: 'auto', question: verdict.question || line.text });
+                            if (typeof fireDispatcher.maybeFire === 'function') {
+                                await fireDispatcher.maybeFire(line);
+                            }
+                        }
+                    } catch (e) {
+                        onState?.({ type: 'error', error: 'classify: ' + e.message });
+                    }
+                });
             } else {
                 onInterim?.(line);
             }
@@ -130,9 +168,12 @@ function start({ onFinal, onInterim, onState } = {}) {
 
     return {
         store,
+        classifier,
+        fireDispatcher,
         stop() {
             try { clearInterval(statsTimer); } catch (_) {}
             try { bus.stop(); } catch (_) {}
+            try { classifier.stop(); } catch (_) {}
             try { live?.finish?.(); } catch (_) {}
             try { store.close(); } catch (_) {}
         },

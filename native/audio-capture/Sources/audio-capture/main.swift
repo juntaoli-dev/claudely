@@ -19,15 +19,29 @@ struct AudioCapture {
     }
 
     static func runSCKStream(bundleID: String, track: UInt8) async throws {
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        let content: SCShareableContent
+        do {
+            content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        } catch {
+            FileHandle.standardError.write("ERR: SCShareableContent failed: \(error.localizedDescription) (need Screen Recording permission)\n".data(using: .utf8)!)
+            exit(2)
+        }
+        FileHandle.standardError.write("INFO: SCK sees \(content.applications.count) apps, \(content.displays.count) displays\n".data(using: .utf8)!)
+
+        guard let firstDisplay = content.displays.first else {
+            FileHandle.standardError.write("ERR: no displays\n".data(using: .utf8)!)
+            exit(2)
+        }
+
         let target = content.applications.first { $0.bundleIdentifier == bundleID }
 
         let filter: SCContentFilter
         if let target {
-            filter = SCContentFilter(display: content.displays.first!, including: [target], exceptingWindows: [])
+            FileHandle.standardError.write("INFO: filter on bundle \(bundleID)\n".data(using: .utf8)!)
+            filter = SCContentFilter(display: firstDisplay, including: [target], exceptingWindows: [])
         } else {
             FileHandle.standardError.write("WARN: bundle \(bundleID) not running, capturing full display audio\n".data(using: .utf8)!)
-            filter = SCContentFilter(display: content.displays.first!, excludingApplications: [], exceptingWindows: [])
+            filter = SCContentFilter(display: firstDisplay, excludingApplications: [], exceptingWindows: [])
         }
 
         let config = SCStreamConfiguration()
@@ -37,8 +51,19 @@ struct AudioCapture {
 
         let stream = SCStream(filter: filter, configuration: config, delegate: nil)
         let out = StdoutSink(track: track)
-        try stream.addStreamOutput(out, type: .audio, sampleHandlerQueue: .main)
-        try await stream.startCapture()
+        do {
+            try stream.addStreamOutput(out, type: .audio, sampleHandlerQueue: .main)
+        } catch {
+            FileHandle.standardError.write("ERR: addStreamOutput: \(error.localizedDescription)\n".data(using: .utf8)!)
+            exit(2)
+        }
+        do {
+            try await stream.startCapture()
+        } catch {
+            FileHandle.standardError.write("ERR: startCapture: \(error.localizedDescription)\n".data(using: .utf8)!)
+            exit(2)
+        }
+        FileHandle.standardError.write("INFO: capture started\n".data(using: .utf8)!)
 
         // Also tap mic on a background task as track 1
         Task.detached { try? MicCapture.run(track: 1) }
@@ -49,15 +74,49 @@ struct AudioCapture {
 
 final class StdoutSink: NSObject, SCStreamOutput {
     let track: UInt8
+    var callbacks = 0
     init(track: UInt8) { self.track = track }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .audio, let bb = sampleBuffer.dataBuffer else { return }
-        var lengthOut = 0
-        var dataOut: UnsafeMutablePointer<Int8>?
-        CMBlockBufferGetDataPointer(bb, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &lengthOut, dataPointerOut: &dataOut)
-        guard let dataOut else { return }
-        writeFrame(track: track, bytes: UnsafeBufferPointer(start: dataOut, count: lengthOut))
+        callbacks += 1
+        if callbacks <= 3 || callbacks % 50 == 0 {
+            FileHandle.standardError.write("INFO: callback #\(callbacks) type=\(type.rawValue)\n".data(using: .utf8)!)
+        }
+        guard type == .audio else { return }
+        // SCK audio arrives as AudioBufferList, not plain block buffer. Extract samples via that API.
+        var abl = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(mNumberChannels: 0, mDataByteSize: 0, mData: nil))
+        var blockBuffer: CMBlockBuffer?
+        let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer,
+            bufferListSizeNeededOut: nil,
+            bufferListOut: &abl,
+            bufferListSize: MemoryLayout<AudioBufferList>.size,
+            blockBufferAllocator: nil,
+            blockBufferMemoryAllocator: nil,
+            flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
+            blockBufferOut: &blockBuffer
+        )
+        guard status == noErr else {
+            FileHandle.standardError.write("ERR: GetAudioBufferList status=\(status)\n".data(using: .utf8)!)
+            return
+        }
+        let buffer = abl.mBuffers
+        guard let data = buffer.mData else { return }
+        let byteCount = Int(buffer.mDataByteSize)
+        // SCK delivers Float32 at requested sampleRate. Convert to Int16 mono @16 kHz.
+        let sampleCount = byteCount / MemoryLayout<Float>.size
+        var int16 = [Int16](repeating: 0, count: sampleCount)
+        data.bindMemory(to: Float.self, capacity: sampleCount).withMemoryRebound(to: Float.self, capacity: sampleCount) { ptr in
+            for i in 0..<sampleCount {
+                let f = max(-1.0, min(1.0, ptr[i]))
+                int16[i] = Int16(f * Float(Int16.max))
+            }
+        }
+        int16.withUnsafeBufferPointer { buf in
+            buf.baseAddress!.withMemoryRebound(to: Int8.self, capacity: sampleCount * 2) { raw in
+                writeFrame(track: track, bytes: UnsafeBufferPointer(start: raw, count: sampleCount * 2))
+            }
+        }
     }
 }
 

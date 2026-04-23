@@ -205,6 +205,31 @@ app.whenReady().then(async () => {
 
         createWindows();
 
+        if (process.env.CLAUDELY_DEBUG_AUDIO) {
+            setTimeout(() => {
+                try {
+                    const { AudioBus } = require('./features/audio/audioBus');
+                    const path = require('path');
+                    const bin = path.join(__dirname, 'ui/assets/bin/audio-capture');
+                    console.log('[DEBUG_AUDIO] spawning', bin);
+                    const bus = new AudioBus({ binaryPath: bin, bundleId: process.env.CLAUDELY_DEBUG_AUDIO });
+                    let frames = 0;
+                    bus.on('pcm', ({ track, pcm }) => {
+                        frames++;
+                        if (frames <= 3 || frames % 50 === 0) console.log('[DEBUG_AUDIO] frame', { track, bytes: pcm.length, total: frames });
+                        if (frames >= 200) { console.log('[DEBUG_AUDIO] DONE frames=' + frames); bus.stop(); app.exit(0); }
+                    });
+                    bus.on('stderr', (s) => process.stderr.write('[DEBUG_AUDIO stderr] ' + s));
+                    bus.on('exit', (code) => { console.log('[DEBUG_AUDIO] child exit', code); app.exit(code || 0); });
+                    bus.start();
+                    setTimeout(() => { console.log('[DEBUG_AUDIO] timeout frames=' + frames); bus.stop(); app.exit(frames > 0 ? 0 : 3); }, 20000);
+                } catch (e) {
+                    console.error('[DEBUG_AUDIO] ERR', e);
+                    app.exit(1);
+                }
+            }, 2000);
+        }
+
         if (process.env.CLAUDELY_DEBUG_ASK) {
             setTimeout(async () => {
                 try {

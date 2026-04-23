@@ -16,7 +16,8 @@
         "postinstall": "electron-builder install-app-deps",
         "build:renderer": "node build.js",
         "build:web": "cd web && npm run build && cd ..",
-        "build:all": "npm run build:renderer && npm run build:web",
+        "build:native": "cd native/audio-capture && swiftc -parse-as-library -O -target arm64-apple-macosx14.0 Sources/audio-capture/main.swift -o .build/release/audio-capture",
+        "build:all": "npm run build:native && npm run build:renderer && npm run build:web",
         "watch:renderer": "node build.js --watch",
         "test": "vitest run",
         "test:watch": "vitest"

@@ -28,7 +28,7 @@ if (shouldUseLiquidClaudely) {
 }
 /* ────────────────[ GLASS BYPASS ]─────────────── */
 
-let isContentProtectionOn = true;
+let isContentProtectionOn = process.env.CLAUDELY_DISABLE_CP === '1' ? false : true;
 let lastVisibleWindows = new Set(['header']);
 
 let currentHeaderState = 'apikey';

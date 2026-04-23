@@ -17,7 +17,9 @@
         "build:renderer": "node build.js",
         "build:web": "cd web && npm run build && cd ..",
         "build:all": "npm run build:renderer && npm run build:web",
-        "watch:renderer": "node build.js --watch"
+        "watch:renderer": "node build.js --watch",
+        "test": "vitest run",
+        "test:watch": "vitest"
     },
     "keywords": [
         "claudely",
@@ -57,7 +59,8 @@
         "electron-builder": "^26.0.12",
         "electron-reloader": "^1.2.3",
         "esbuild": "^0.25.5",
-        "prettier": "^3.6.2"
+        "prettier": "^3.6.2",
+        "vitest": "^4.1.5"
     },
     "optionalDependencies": {
         "electron-liquid-glass": "^1.0.1"

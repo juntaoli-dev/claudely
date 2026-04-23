@@ -62,7 +62,11 @@ module.exports = {
         event.sender.send('ask:done');
     });
 
-    // Listen
+    // Listen (plan-shape additions — drive new sttService pipeline)
+    ipcMain.handle('listen:start', async () => { await listenService.start(); return { success: true }; });
+    ipcMain.handle('listen:stop', async () => listenService.closeSession());
+
+    // Listen (legacy Glass channels preserved for existing renderer buttons)
     ipcMain.handle('listen:sendMicAudio', async (event, { data, mimeType }) => await listenService.handleSendMicAudioContent(data, mimeType));
     ipcMain.handle('listen:sendSystemAudio', async (event, { data, mimeType }) => {
         const result = await listenService.sttService.sendSystemAudioContent(data, mimeType);

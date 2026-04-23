@@ -114,3 +114,4 @@ out/
 dist/
 build/
 scratch/
+native/*/.build/

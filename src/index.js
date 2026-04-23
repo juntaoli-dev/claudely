@@ -205,6 +205,38 @@ app.whenReady().then(async () => {
 
         createWindows();
 
+        if (process.env.CLAUDELY_DEBUG_STT) {
+            setTimeout(() => {
+                try {
+                    const stt = require('./features/listen/stt/sttService');
+                    console.log('[DEBUG_STT] starting pipeline');
+                    const durMs = Number(process.env.CLAUDELY_DEBUG_STT_MS || 25000);
+                    let finals = 0, interims = 0;
+                    const s = stt.start({
+                        onFinal: (l) => { finals++; console.log(`[DEBUG_STT][final #${finals}] ${l.speaker}: ${l.text}`); },
+                        onInterim: (l) => {
+                            interims++;
+                            if (interims <= 3 || interims % 25 === 0)
+                                console.log(`[DEBUG_STT][interim #${interims}] ${l.speaker}: ${l.text}`);
+                        },
+                        onState: (st) => {
+                            if (st.type === 'stderr') process.stderr.write(`[DEBUG_STT][helper] ${st.text}`);
+                            else if (st.type === 'stats') console.log(`[DEBUG_STT][stats] track0=${st.track0} track1=${st.track1}`);
+                            else console.log('[DEBUG_STT][state]', st.type, st.error || st.code || '');
+                        },
+                    });
+                    setTimeout(() => {
+                        console.log(`[DEBUG_STT] DONE finals=${finals} interims=${interims}`);
+                        try { s.stop(); } catch (_) {}
+                        app.exit(finals > 0 || interims > 0 ? 0 : 3);
+                    }, durMs);
+                } catch (e) {
+                    console.error('[DEBUG_STT] ERR', e);
+                    app.exit(1);
+                }
+            }, 2000);
+        }
+
         if (process.env.CLAUDELY_DEBUG_AUDIO) {
             setTimeout(() => {
                 try {

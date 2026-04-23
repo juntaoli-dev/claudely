@@ -22,7 +22,8 @@ function start({ onFinal, onInterim, onState } = {}) {
     const store = new TranscriptStore({ maxMinutes: 60, persistPath });
 
     const binaryPath = path.join(__dirname, '../../../ui/assets/bin/audio-capture');
-    const bus = new AudioBus({ binaryPath });
+    const bundleId = process.env.CLAUDELY_ZOOM_BUNDLE_ID || 'us.zoom.xos';
+    const bus = new AudioBus({ binaryPath, bundleId });
 
     let live = null;
     let liveReady = false;
@@ -43,16 +44,21 @@ function start({ onFinal, onInterim, onState } = {}) {
         }
 
         const deepgram = createClient(key);
+        // Mono fallback is the default for now; multichannel adds fragility when
+        // the mic track is silent (Electron headless) and Deepgram idle-closes.
+        // Phase 6/7 can re-enable multichannel once mic input is reliable.
+        const mono = process.env.CLAUDELY_STT_MONO !== '0';
         live = deepgram.listen.live({
             model: 'nova-3',
             diarize: true,
-            multichannel: true,
+            multichannel: !mono,
             encoding: 'linear16',
             sample_rate: 16000,
-            channels: 2,
+            channels: mono ? 1 : 2,
             interim_results: true,
             smart_format: true,
         });
+        console.log(`[sttService] Deepgram live channels=${mono ? 1 : 2} diarize=true multichannel=${!mono}`);
 
         live.on(LiveTranscriptionEvents.Open, () => {
             liveReady = true;
@@ -79,10 +85,23 @@ function start({ onFinal, onInterim, onState } = {}) {
         live.on(LiveTranscriptionEvents.Close, () => { liveClosed = true; onState?.({ type: 'closed' }); });
     })().catch((e) => onState?.({ type: 'error', error: 'deepgram-init: ' + e.message }));
 
-    // Interleave track-0 (them) and track-1 (me) into stereo PCM for Deepgram multichannel.
+    // In mono mode: send track-0 straight through. Skip track-1 (mic).
+    // In multichannel mode: interleave track-0 and track-1 into stereo PCM.
+    const mono = process.env.CLAUDELY_STT_MONO !== '0';
     const pending = { 0: Buffer.alloc(0), 1: Buffer.alloc(0) };
+    const trackBytes = { 0: 0, 1: 0 };
     bus.on('pcm', ({ track, pcm }) => {
         if (track !== 0 && track !== 1) return;
+        trackBytes[track] += pcm.length;
+
+        if (mono) {
+            if (track !== 0) return; // drop mic in mono mode
+            if (liveReady && !liveClosed) {
+                try { live.send(pcm); } catch (e) { onState?.({ type: 'error', error: 'send: ' + e.message }); }
+            }
+            return;
+        }
+
         pending[track] = Buffer.concat([pending[track], pcm]);
         const samples = Math.min(pending[0].length, pending[1].length) / 2;
         if (samples === 0) return;
@@ -100,6 +119,11 @@ function start({ onFinal, onInterim, onState } = {}) {
             try { live.send(interleaved); } catch (e) { onState?.({ type: 'error', error: 'send: ' + e.message }); }
         }
     });
+
+    // Every 2s, emit a track byte-count snapshot so we can diagnose starvation.
+    const statsTimer = setInterval(() => {
+        onState?.({ type: 'stats', track0: trackBytes[0], track1: trackBytes[1] });
+    }, 2000);
     bus.on('stderr', (s) => onState?.({ type: 'stderr', text: s }));
     bus.on('exit', (code) => onState?.({ type: 'capture-exit', code }));
     bus.start();
@@ -107,6 +131,7 @@ function start({ onFinal, onInterim, onState } = {}) {
     return {
         store,
         stop() {
+            try { clearInterval(statsTimer); } catch (_) {}
             try { bus.stop(); } catch (_) {}
             try { live?.finish?.(); } catch (_) {}
             try { store.close(); } catch (_) {}

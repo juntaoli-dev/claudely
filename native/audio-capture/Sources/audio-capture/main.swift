@@ -65,25 +65,54 @@ struct AudioCapture {
         }
         FileHandle.standardError.write("INFO: capture started\n".data(using: .utf8)!)
 
-        // Also tap mic on a background task as track 1
+        // Also tap mic on a background task as track 1. Failures are non-fatal;
+        // keep the process alive for SCK delegate callbacks.
         Task.detached { try? MicCapture.run(track: 1) }
 
-        dispatchMain()
+        // Keep async main alive indefinitely so the SCStream delegate keeps
+        // receiving audio. dispatchMain() does not play well with the Swift
+        // concurrency runtime under @main async.
+        try await Task.sleep(nanoseconds: UInt64.max)
     }
 }
 
 final class StdoutSink: NSObject, SCStreamOutput {
     let track: UInt8
     var callbacks = 0
+    var srcRate: Double = 0
+    var srcChannels: UInt32 = 0
+    var srcIsFloat: Bool = false
+    var srcIsPacked: Bool = false
+    var srcIsNonInterleaved: Bool = false
+    var formatLogged = false
+
     init(track: UInt8) { self.track = track }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         callbacks += 1
-        if callbacks <= 3 || callbacks % 50 == 0 {
-            FileHandle.standardError.write("INFO: callback #\(callbacks) type=\(type.rawValue)\n".data(using: .utf8)!)
-        }
         guard type == .audio else { return }
-        // SCK audio arrives as AudioBufferList, not plain block buffer. Extract samples via that API.
+
+        // Describe source format once.
+        if !formatLogged,
+           let fd = CMSampleBufferGetFormatDescription(sampleBuffer),
+           let asbdPtr = CMAudioFormatDescriptionGetStreamBasicDescription(fd) {
+            let asbd = asbdPtr.pointee
+            srcRate = asbd.mSampleRate
+            srcChannels = asbd.mChannelsPerFrame
+            srcIsFloat = (asbd.mFormatFlags & kAudioFormatFlagIsFloat) != 0
+            srcIsPacked = (asbd.mFormatFlags & kAudioFormatFlagIsPacked) != 0
+            srcIsNonInterleaved = (asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
+            formatLogged = true
+            FileHandle.standardError.write("INFO: SCK src fmt rate=\(srcRate) ch=\(srcChannels) bits=\(asbd.mBitsPerChannel) flags=\(asbd.mFormatFlags) float=\(srcIsFloat) nonInt=\(srcIsNonInterleaved)\n".data(using: .utf8)!)
+        }
+        guard srcRate == 16000, srcChannels == 1, srcIsFloat else {
+            // Unexpected format — drop to avoid sending garbage to Deepgram.
+            if callbacks % 100 == 0 {
+                FileHandle.standardError.write("WARN: unexpected SCK format rate=\(srcRate) ch=\(srcChannels) float=\(srcIsFloat)\n".data(using: .utf8)!)
+            }
+            return
+        }
+
         var abl = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(mNumberChannels: 0, mDataByteSize: 0, mData: nil))
         var blockBuffer: CMBlockBuffer?
         let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
@@ -96,19 +125,15 @@ final class StdoutSink: NSObject, SCStreamOutput {
             flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
             blockBufferOut: &blockBuffer
         )
-        guard status == noErr else {
-            FileHandle.standardError.write("ERR: GetAudioBufferList status=\(status)\n".data(using: .utf8)!)
-            return
-        }
-        let buffer = abl.mBuffers
-        guard let data = buffer.mData else { return }
-        let byteCount = Int(buffer.mDataByteSize)
-        // SCK delivers Float32 at requested sampleRate. Convert to Int16 mono @16 kHz.
+        guard status == noErr, let data = abl.mBuffers.mData else { return }
+        let byteCount = Int(abl.mBuffers.mDataByteSize)
         let sampleCount = byteCount / MemoryLayout<Float>.size
+        if sampleCount == 0 { return }
+
         var int16 = [Int16](repeating: 0, count: sampleCount)
-        data.bindMemory(to: Float.self, capacity: sampleCount).withMemoryRebound(to: Float.self, capacity: sampleCount) { ptr in
+        data.withMemoryRebound(to: Float.self, capacity: sampleCount) { floatPtr in
             for i in 0..<sampleCount {
-                let f = max(-1.0, min(1.0, ptr[i]))
+                let f = max(-1.0, min(1.0, floatPtr[i]))
                 int16[i] = Int16(f * Float(Int16.max))
             }
         }
@@ -121,18 +146,59 @@ final class StdoutSink: NSObject, SCStreamOutput {
 }
 
 enum MicCapture {
+    // installTap requires the tap format to match the node's native output format
+    // (or nil). We tap at the native rate, then convert to Int16 mono @16 kHz
+    // for uniform framing with SCK audio.
     static func run(track: UInt8) throws {
         let engine = AVAudioEngine()
         let input = engine.inputNode
-        let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            guard let raw = buffer.int16ChannelData?.pointee else { return }
-            let byteCount = Int(buffer.frameLength) * 2
+        let srcFormat = input.outputFormat(forBus: 0)
+
+        // Guard: silent no-op if mic has no valid input (0ch, 0Hz) so we don't
+        // crash the whole helper when microphone permission isn't granted.
+        if srcFormat.sampleRate == 0 || srcFormat.channelCount == 0 {
+            FileHandle.standardError.write("WARN: mic input unavailable (rate=\(srcFormat.sampleRate) ch=\(srcFormat.channelCount)); skipping mic track\n".data(using: .utf8)!)
+            return
+        }
+
+        guard let dstFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true) else {
+            FileHandle.standardError.write("WARN: could not create dst mic format; skipping mic track\n".data(using: .utf8)!)
+            return
+        }
+
+        guard let converter = AVAudioConverter(from: srcFormat, to: dstFormat) else {
+            FileHandle.standardError.write("WARN: could not create mic converter (\(srcFormat) → \(dstFormat)); skipping mic track\n".data(using: .utf8)!)
+            return
+        }
+
+        input.installTap(onBus: 0, bufferSize: 2048, format: srcFormat) { buffer, _ in
+            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * 16000.0 / srcFormat.sampleRate) + 16
+            guard let outBuf = AVAudioPCMBuffer(pcmFormat: dstFormat, frameCapacity: capacity) else { return }
+            var error: NSError?
+            var fed = false
+            converter.convert(to: outBuf, error: &error) { _, outStatus in
+                if fed { outStatus.pointee = .noDataNow; return nil }
+                fed = true
+                outStatus.pointee = .haveData
+                return buffer
+            }
+            if let error {
+                FileHandle.standardError.write("WARN: mic convert error: \(error.localizedDescription)\n".data(using: .utf8)!)
+                return
+            }
+            guard let raw = outBuf.int16ChannelData?.pointee else { return }
+            let byteCount = Int(outBuf.frameLength) * 2
+            if byteCount == 0 { return }
             raw.withMemoryRebound(to: Int8.self, capacity: byteCount) { ptr in
                 writeFrame(track: track, bytes: UnsafeBufferPointer(start: ptr, count: byteCount))
             }
         }
-        try engine.start()
+
+        do { try engine.start() } catch {
+            FileHandle.standardError.write("WARN: mic engine start failed: \(error.localizedDescription)\n".data(using: .utf8)!)
+            return
+        }
+        FileHandle.standardError.write("INFO: mic tap running at \(srcFormat.sampleRate) Hz → 16k Int16 mono\n".data(using: .utf8)!)
         RunLoop.current.run()
     }
 }

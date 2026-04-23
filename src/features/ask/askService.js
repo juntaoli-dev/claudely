@@ -124,42 +124,55 @@ class AskService {
             console.warn('[AskService] Could not persist prompt:', e.message);
         }
 
-        try {
+        // Route through the manual FireDispatcher so manual asks share the
+        // same queue as auto-answer + wake-phrase fires and take a screenshot
+        // by default (spec's FireDispatcher manual path).
+        const { getManualDispatcher } = require('../fire/instance');
+        return await new Promise((resolve) => {
             let full = '';
-            const onDelta = (text) => {
-                full += text;
+            let resolved = false;
+            const finish = (ok, errorMsg) => {
+                if (resolved) return;
+                resolved = true;
                 this.state.isLoading = false;
-                this.state.isStreaming = true;
-                this.state.currentResponse = full;
+                this.state.isStreaming = false;
+                this.state.showTextInput = true;
                 this._broadcastState();
+                if (ok && sessionId && full) {
+                    askRepository.addAiMessage({ sessionId, role: 'assistant', content: full }).catch((e) => {
+                        console.warn('[AskService] Could not persist assistant reply:', e.message);
+                    });
+                }
+                if (!ok) {
+                    const askWin = getWindowPool()?.get('ask');
+                    if (askWin && !askWin.isDestroyed()) {
+                        askWin.webContents.send('ask-response-stream-error', { error: errorMsg });
+                    }
+                }
+                resolve(ok ? { success: true } : { success: false, error: errorMsg });
             };
 
-            await ask({ question, transcriptTail: '', imagePath: null, onDelta });
-
-            this.state.isStreaming = false;
-            this.state.showTextInput = true;
-            this._broadcastState();
-
-            if (sessionId && full) {
-                try {
-                    await askRepository.addAiMessage({ sessionId, role: 'assistant', content: full });
-                } catch (e) {
-                    console.warn('[AskService] Could not persist assistant reply:', e.message);
-                }
-            }
-            return { success: true };
-        } catch (error) {
-            console.error('[AskService] Error during message processing:', error);
-            this.state.isLoading = false;
-            this.state.isStreaming = false;
-            this.state.showTextInput = true;
-            this._broadcastState();
-            const askWin = getWindowPool()?.get('ask');
-            if (askWin && !askWin.isDestroyed()) {
-                askWin.webContents.send('ask-response-stream-error', { error: error.message || String(error) });
-            }
-            return { success: false, error: error.message };
-        }
+            const dispatcher = getManualDispatcher({
+                onState: (s) => {
+                    if (s.type === 'thinking') {
+                        this.state.isLoading = true;
+                        this.state.isStreaming = false;
+                        this._broadcastState();
+                    } else if (s.type === 'delta') {
+                        full += s.text;
+                        this.state.isLoading = false;
+                        this.state.isStreaming = true;
+                        this.state.currentResponse = full;
+                        this._broadcastState();
+                    } else if (s.type === 'done') {
+                        finish(true);
+                    } else if (s.type === 'error') {
+                        finish(false, s.error || 'unknown error');
+                    }
+                },
+            });
+            dispatcher.manualFire({ question }).catch((e) => finish(false, e.message));
+        });
     }
 }
 

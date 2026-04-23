@@ -11,7 +11,7 @@ const { AudioBus } = require('../../audio/audioBus');
 const { TranscriptStore } = require('../transcriptStore');
 const { ClassifierBus } = require('../../classify/classifierBus');
 const { matchWake } = require('../../classify/wakePhrase');
-const { FireDispatcher } = require('../../fire/fireDispatcher');
+const { buildDispatcher } = require('../../fire/instance');
 const config = require('../../common/config/config');
 
 function start({ onFinal, onInterim, onState } = {}) {
@@ -35,7 +35,13 @@ function start({ onFinal, onInterim, onState } = {}) {
     const classifierPath = path.join(__dirname, '../../../ui/assets/bin/classifier');
     const classifier = new ClassifierBus({ binaryPath: classifierPath });
     classifier.start();
-    const fireDispatcher = new FireDispatcher({ store: null, classifier, config, onState });
+    // Real dispatcher now: passes store + classifier + real Claude + real
+    // screen grabber. onState surfaces delta/done/error/queued up to the
+    // renderer via the same channel STT uses.
+    const fireDispatcher = buildDispatcher({ store: null, classifier, onState });
+    // Swap store in after the store var above is captured; buildDispatcher
+    // received a no-op tail stub, so re-attach the real store:
+    fireDispatcher.store = store;
 
     let live = null;
     let liveReady = false;

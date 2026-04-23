@@ -55,11 +55,15 @@ module.exports = {
     ipcMain.handle('ask:toggleAskButton', async () => await askService.toggleAskButton());
     ipcMain.handle('ask:closeAskWindow', async () => await askService.closeAskWindow());
     ipcMain.handle('ask:question', async (event, { question }) => {
-        await askService.ask({
-            question,
-            onDelta: (text) => event.sender.send('ask:delta', text),
+        const { getManualDispatcher } = require('../features/fire/instance');
+        const dispatcher = getManualDispatcher({
+            onState: (s) => {
+                if (s.type === 'delta') event.sender.send('ask:delta', s.text);
+                if (s.type === 'done') event.sender.send('ask:done');
+                if (s.type === 'error') event.sender.send('ask:error', s.error);
+            },
         });
-        event.sender.send('ask:done');
+        await dispatcher.manualFire({ question });
     });
 
     // Listen (plan-shape additions — drive new sttService pipeline)

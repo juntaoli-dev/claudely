@@ -265,16 +265,22 @@ app.whenReady().then(async () => {
         if (process.env.CLAUDELY_DEBUG_ASK) {
             setTimeout(async () => {
                 try {
-                    console.log('[DEBUG_ASK] triggering ask flow');
-                    const { ask } = require('./features/ask/askService');
+                    console.log('[DEBUG_ASK] triggering manualFire via FireDispatcher');
+                    const { getManualDispatcher } = require('./features/fire/instance');
                     let full = '';
-                    await ask({
-                        question: process.env.CLAUDELY_DEBUG_ASK,
-                        transcriptTail: '',
-                        imagePath: null,
-                        onDelta: (t) => { full += t; process.stdout.write(t); },
+                    await new Promise((resolve, reject) => {
+                        const dispatcher = getManualDispatcher({
+                            onState: (s) => {
+                                if (s.type === 'thinking') console.log('[DEBUG_ASK] thinking (screenshot + tail)');
+                                else if (s.type === 'delta') { full += s.text; process.stdout.write(s.text); }
+                                else if (s.type === 'done') { console.log('\n[DEBUG_ASK] done'); resolve(); }
+                                else if (s.type === 'error') { console.error('\n[DEBUG_ASK] error:', s.error); reject(new Error(s.error)); }
+                                else console.log('[DEBUG_ASK][state]', s.type);
+                            },
+                        });
+                        dispatcher.manualFire({ question: process.env.CLAUDELY_DEBUG_ASK }).catch(reject);
                     });
-                    console.log('\n[DEBUG_ASK] DONE len=' + full.length);
+                    console.log('[DEBUG_ASK] DONE len=' + full.length);
                     app.exit(0);
                 } catch (e) {
                     console.error('[DEBUG_ASK] ERR', e);

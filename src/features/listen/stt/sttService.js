@@ -781,7 +781,7 @@ class SttService {
         }
 
         await Promise.all(closePromises);
-        console.log('All STT sessions closed.');
+        try { console.log('All STT sessions closed.'); } catch (_) { /* stdout may be closed during shutdown */ }
 
         // Reset state
         this.myCurrentUtterance = '';

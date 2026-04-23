@@ -6,6 +6,13 @@ function setAuthService(service) {
     authService = service;
 }
 
+function getAuthService() {
+    if (!authService) {
+        authService = require('../../services/authService');
+    }
+    return authService;
+}
+
 function getBaseRepository() {
     return sqliteRepository;
 }
@@ -17,12 +24,12 @@ const sessionRepositoryAdapter = {
     getById: (id) => getBaseRepository().getById(id),
     
     create: (type = 'ask') => {
-        const uid = authService.getCurrentUserId();
+        const uid = getAuthService().getCurrentUserId();
         return getBaseRepository().create(uid, type);
     },
     
     getAllByUserId: () => {
-        const uid = authService.getCurrentUserId();
+        const uid = getAuthService().getCurrentUserId();
         return getBaseRepository().getAllByUserId(uid);
     },
 
@@ -37,12 +44,12 @@ const sessionRepositoryAdapter = {
     touch: (id) => getBaseRepository().touch(id),
 
     getOrCreateActive: (requestedType = 'ask') => {
-        const uid = authService.getCurrentUserId();
+        const uid = getAuthService().getCurrentUserId();
         return getBaseRepository().getOrCreateActive(uid, requestedType);
     },
 
     endAllActiveSessions: () => {
-        const uid = authService.getCurrentUserId();
+        const uid = getAuthService().getCurrentUserId();
         return getBaseRepository().endAllActiveSessions(uid);
     },
 };

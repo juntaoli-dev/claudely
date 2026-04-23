@@ -26,16 +26,19 @@ class ClaudeSession {
   }
 
   async ask({ question, transcriptTail, imagePath, onDelta }) {
-    const content = [];
-    if (imagePath) {
-      content.push({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: null, path: imagePath } });
+    const parts = [];
+    if (transcriptTail) {
+      parts.push(`Recent transcript:\n${transcriptTail}`);
     }
-    const context = transcriptTail ? `Recent transcript:\n${transcriptTail}\n\nQuestion: ${question}` : question;
-    content.push({ type: 'text', text: context });
+    if (imagePath) {
+      parts.push(`Attached screenshot available at: ${imagePath}\n(Use the Read tool to inspect it if relevant.)`);
+    }
+    parts.push(`Question: ${question}`);
+    const prompt = parts.join('\n\n');
 
     const queryFn = await this._getQuery();
     const iterator = queryFn({
-      prompt: { role: 'user', content },
+      prompt,
       options: {
         cwd: this.cwd,
         model: this.model,

@@ -11,6 +11,19 @@ if (require('electron-squirrel-startup')) {
     process.exit(0);
 }
 
+// Swallow EIO on stdout/stderr that happens when the launching shell closes
+// its pipe while background console.log calls are still in flight.
+process.stdout.on?.('error', (err) => { if (err && err.code !== 'EIO' && err.code !== 'EPIPE') console.error(err); });
+process.stderr.on?.('error', (err) => { if (err && err.code !== 'EIO' && err.code !== 'EPIPE') {} });
+
+process.on('uncaughtException', (err) => {
+    if (err && (err.code === 'EIO' || err.code === 'EPIPE')) return;
+    console.error('[UncaughtException]', err);
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('[UnhandledRejection]', reason);
+});
+
 const { app, BrowserWindow, shell, ipcMain, dialog, desktopCapturer, session } = require('electron');
 const { createWindows } = require('./window/windowManager.js');
 const listenService = require('./features/listen/listenService');
@@ -189,8 +202,29 @@ app.whenReady().then(async () => {
 
         WEB_PORT = await startWebStack();
         console.log('Web front-end listening on', WEB_PORT);
-        
+
         createWindows();
+
+        if (process.env.CLAUDELY_DEBUG_ASK) {
+            setTimeout(async () => {
+                try {
+                    console.log('[DEBUG_ASK] triggering ask flow');
+                    const { ask } = require('./features/ask/askService');
+                    let full = '';
+                    await ask({
+                        question: process.env.CLAUDELY_DEBUG_ASK,
+                        transcriptTail: '',
+                        imagePath: null,
+                        onDelta: (t) => { full += t; process.stdout.write(t); },
+                    });
+                    console.log('\n[DEBUG_ASK] DONE len=' + full.length);
+                    app.exit(0);
+                } catch (e) {
+                    console.error('[DEBUG_ASK] ERR', e);
+                    app.exit(1);
+                }
+            }, 2000);
+        }
 
     } catch (err) {
         console.error('>>> [index.js] Database initialization failed - some features may not work', err);

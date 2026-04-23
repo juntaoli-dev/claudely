@@ -1,9 +1,98 @@
-// src/features/fire/fireDispatcher.js — Phase 5 will replace this stub with
-// the real queue + wake-phrase + auto-answer gated dispatcher.
+// src/features/fire/fireDispatcher.js
+//
+// Real FireDispatcher. Gates fires on auto-answer or wake phrase, captures the
+// current screen + 30 s transcript tail, and streams a Claude answer back via
+// onState delta events. Queues up to 3 backlogged fires; drops oldest over cap.
+
+const { matchWake } = require('../classify/wakePhrase');
+
 class FireDispatcher {
-    constructor() {}
-    maybeFire() { return null; }
-    async manualFire() { return null; }
-    queueSize() { return 0; }
+    constructor({ store, classifier, grabber, claude, config, onState } = {}) {
+        this.store = store;
+        this.classifier = classifier;
+        this.grabber = grabber;
+        this.claude = claude;
+        this.config = config;
+        this.onState = onState || (() => {});
+        this._inFlight = false;
+        this._queue = [];
+    }
+
+    queueSize() { return this._queue.length; }
+
+    async maybeFire(line) {
+        const wakePhrases = this.config?.get?.('wakePhrases') || [];
+        const auto = !!this.config?.get?.('autoAnswer');
+
+        let question = matchWake(line.text, wakePhrases);
+        if (!question && auto) {
+            try {
+                const verdict = await this.classifier.classify(line.text);
+                if (verdict?.addressed) question = verdict.question || line.text;
+            } catch (_) {}
+        }
+        if (!question) return null;
+
+        if (this._inFlight) {
+            if (this._queue.length >= 3) {
+                this._queue.shift();
+                this.onState({ type: 'drop-queued' });
+            }
+            this._queue.push({ line, question });
+            this.onState({ type: 'queued', size: this._queue.length });
+            return 'queued';
+        }
+
+        this._fireWithDrain({ line, question });
+        return 'fired';
+    }
+
+    async manualFire({ question, transcriptTail, imagePath }) {
+        if (this._inFlight) {
+            if (this._queue.length >= 3) {
+                this._queue.shift();
+                this.onState({ type: 'drop-queued' });
+            }
+            this._queue.push({ line: { ts: Date.now() }, question, transcriptTail, imagePath, manual: true });
+            this.onState({ type: 'queued', size: this._queue.length });
+            return 'queued';
+        }
+        this._fireWithDrain({ line: { ts: Date.now() }, question, transcriptTail, imagePath, manual: true });
+        return 'fired';
+    }
+
+    // Fire then drain the queue. Not awaited by maybeFire so queueing tests can
+    // observe backlog while the first fire is still pending.
+    _fireWithDrain(item) {
+        (async () => {
+            await this._fire(item);
+            while (this._queue.length) await this._fire(this._queue.shift());
+        })();
+    }
+
+    async _fire({ line, question, transcriptTail, imagePath, manual }) {
+        this._inFlight = true;
+        this.onState({ type: 'thinking' });
+        if (!imagePath) {
+            try { imagePath = await this.grabber?.grab(); } catch (_) { imagePath = null; }
+        }
+        if (transcriptTail === undefined) {
+            try { transcriptTail = this.store?.tail({ now: line.ts || Date.now(), seconds: 30 }) || ''; }
+            catch (_) { transcriptTail = ''; }
+        }
+        try {
+            await this.claude.ask({
+                question,
+                transcriptTail,
+                imagePath,
+                onDelta: (text) => this.onState({ type: 'delta', text }),
+            });
+            this.onState({ type: 'done' });
+        } catch (e) {
+            this.onState({ type: 'error', error: 'claude: ' + e.message });
+        }
+        this._inFlight = false;
+    }
 }
+
 module.exports = { FireDispatcher };

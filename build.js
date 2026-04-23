@@ -26,6 +26,12 @@ const nativeBinaries = [
         dst: path.join(__dirname, 'src/ui/assets/bin/audio-capture'),
         buildHint: 'npm run build:native',
     },
+    {
+        name: 'classifier',
+        src: path.join(__dirname, 'native/classifier/.build/release/classifier'),
+        dst: path.join(__dirname, 'src/ui/assets/bin/classifier'),
+        buildHint: 'npm run build:native',
+    },
 ];
 
 function copyNativeBinaries({ strict = false } = {}) {

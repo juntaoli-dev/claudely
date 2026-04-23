@@ -145,68 +145,161 @@ final class StdoutSink: NSObject, SCStreamOutput {
     }
 }
 
-enum MicCapture {
-    // installTap requires the tap format to match the node's native output format
-    // (or nil). We tap at the native rate, then convert to Int16 mono @16 kHz
-    // for uniform framing with SCK audio.
-    static func run(track: UInt8) throws {
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        let srcFormat = input.outputFormat(forBus: 0)
+// AVCaptureSession-backed mic delegate. AVAudioEngine's tap callbacks don't
+// fire in a CLI/@main async helper (no NSRunLoop source), but AVCaptureSession
+// wired up through AVCaptureAudioDataOutput works reliably.
+final class MicDelegate: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
+    let track: UInt8
+    var callbacks = 0
+    init(track: UInt8) { self.track = track }
 
-        // Guard: silent no-op if mic has no valid input (0ch, 0Hz) so we don't
-        // crash the whole helper when microphone permission isn't granted.
-        if srcFormat.sampleRate == 0 || srcFormat.channelCount == 0 {
-            FileHandle.standardError.write("WARN: mic input unavailable (rate=\(srcFormat.sampleRate) ch=\(srcFormat.channelCount)); skipping mic track\n".data(using: .utf8)!)
-            return
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        callbacks += 1
+        if callbacks <= 3 || callbacks % 100 == 0 {
+            FileHandle.standardError.write("INFO: mic av callback #\(callbacks)\n".data(using: .utf8)!)
         }
+        guard let fd = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbdPtr = CMAudioFormatDescriptionGetStreamBasicDescription(fd) else { return }
+        let asbd = asbdPtr.pointee
+        let srcRate = asbd.mSampleRate
+        let srcChannels = Int(asbd.mChannelsPerFrame)
+        let isFloat = (asbd.mFormatFlags & kAudioFormatFlagIsFloat) != 0
 
-        guard let dstFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true) else {
-            FileHandle.standardError.write("WARN: could not create dst mic format; skipping mic track\n".data(using: .utf8)!)
-            return
-        }
+        var abl = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(mNumberChannels: 0, mDataByteSize: 0, mData: nil))
+        var blockBuffer: CMBlockBuffer?
+        let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer,
+            bufferListSizeNeededOut: nil,
+            bufferListOut: &abl,
+            bufferListSize: MemoryLayout<AudioBufferList>.size,
+            blockBufferAllocator: nil,
+            blockBufferMemoryAllocator: nil,
+            flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
+            blockBufferOut: &blockBuffer
+        )
+        guard status == noErr, let data = abl.mBuffers.mData else { return }
+        let byteCount = Int(abl.mBuffers.mDataByteSize)
+        // Convert to mono Float32 samples downmixed, then resample to 16 kHz Int16.
+        let bytesPerSample = isFloat ? MemoryLayout<Float>.size : MemoryLayout<Int16>.size
+        let totalSamples = byteCount / bytesPerSample
+        let frameCount = totalSamples / max(1, srcChannels)
+        if frameCount == 0 { return }
 
-        guard let converter = AVAudioConverter(from: srcFormat, to: dstFormat) else {
-            FileHandle.standardError.write("WARN: could not create mic converter (\(srcFormat) → \(dstFormat)); skipping mic track\n".data(using: .utf8)!)
-            return
-        }
-
-        input.installTap(onBus: 0, bufferSize: 2048, format: srcFormat) { buffer, _ in
-            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * 16000.0 / srcFormat.sampleRate) + 16
-            guard let outBuf = AVAudioPCMBuffer(pcmFormat: dstFormat, frameCapacity: capacity) else { return }
-            var error: NSError?
-            var fed = false
-            converter.convert(to: outBuf, error: &error) { _, outStatus in
-                if fed { outStatus.pointee = .noDataNow; return nil }
-                fed = true
-                outStatus.pointee = .haveData
-                return buffer
+        var monoFloat = [Float](repeating: 0, count: frameCount)
+        if isFloat {
+            data.withMemoryRebound(to: Float.self, capacity: totalSamples) { ptr in
+                for i in 0..<frameCount {
+                    var acc: Float = 0
+                    for c in 0..<srcChannels { acc += ptr[i * srcChannels + c] }
+                    monoFloat[i] = acc / Float(srcChannels)
+                }
             }
-            if let error {
-                FileHandle.standardError.write("WARN: mic convert error: \(error.localizedDescription)\n".data(using: .utf8)!)
-                return
-            }
-            guard let raw = outBuf.int16ChannelData?.pointee else { return }
-            let byteCount = Int(outBuf.frameLength) * 2
-            if byteCount == 0 { return }
-            raw.withMemoryRebound(to: Int8.self, capacity: byteCount) { ptr in
-                writeFrame(track: track, bytes: UnsafeBufferPointer(start: ptr, count: byteCount))
+        } else {
+            data.withMemoryRebound(to: Int16.self, capacity: totalSamples) { ptr in
+                for i in 0..<frameCount {
+                    var acc: Int32 = 0
+                    for c in 0..<srcChannels { acc += Int32(ptr[i * srcChannels + c]) }
+                    monoFloat[i] = Float(acc) / Float(srcChannels) / Float(Int16.max)
+                }
             }
         }
 
-        do { try engine.start() } catch {
-            FileHandle.standardError.write("WARN: mic engine start failed: \(error.localizedDescription)\n".data(using: .utf8)!)
-            return
+        // Linear downsample to 16 kHz.
+        let srcHz = srcRate
+        let dstHz = 16000.0
+        let ratio = dstHz / srcHz
+        let outCount = Int(Double(frameCount) * ratio)
+        if outCount == 0 { return }
+        var int16 = [Int16](repeating: 0, count: outCount)
+        for i in 0..<outCount {
+            let srcIdx = Int(Double(i) / ratio)
+            let s = min(max(monoFloat[min(srcIdx, frameCount - 1)], -1.0), 1.0)
+            int16[i] = Int16(s * Float(Int16.max))
         }
-        FileHandle.standardError.write("INFO: mic tap running at \(srcFormat.sampleRate) Hz → 16k Int16 mono\n".data(using: .utf8)!)
-        RunLoop.current.run()
+        int16.withUnsafeBufferPointer { buf in
+            buf.baseAddress!.withMemoryRebound(to: Int8.self, capacity: outCount * 2) { raw in
+                writeFrame(track: track, bytes: UnsafeBufferPointer(start: raw, count: outCount * 2))
+            }
+        }
     }
 }
 
+enum MicCapture {
+    // Hold strong references; otherwise the session/delegate dealloc on return.
+    static var session: AVCaptureSession?
+    static var delegate: MicDelegate?
+
+    static func run(track: UInt8) throws {
+        // Explicitly check + request mic TCC so the child binary is attributed
+        // correctly. Electron-level grant doesn't always cascade.
+        let current = AVCaptureDevice.authorizationStatus(for: .audio)
+        FileHandle.standardError.write("INFO: mic TCC status=\(current.rawValue) (0=notDetermined 1=restricted 2=denied 3=authorized)\n".data(using: .utf8)!)
+        if current == .denied || current == .restricted {
+            FileHandle.standardError.write("ERR: mic access denied; user voice will not be captured. Grant Microphone in System Settings for the host app.\n".data(using: .utf8)!)
+            return
+        }
+        if current == .notDetermined {
+            let sem = DispatchSemaphore(value: 0)
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                FileHandle.standardError.write("INFO: mic TCC request granted=\(granted)\n".data(using: .utf8)!)
+                sem.signal()
+            }
+            sem.wait()
+            if AVCaptureDevice.authorizationStatus(for: .audio) != .authorized {
+                FileHandle.standardError.write("ERR: mic access still not authorized after request.\n".data(using: .utf8)!)
+                return
+            }
+        }
+
+        let session = AVCaptureSession()
+        MicCapture.session = session
+        session.beginConfiguration()
+
+        guard let device = AVCaptureDevice.default(for: .audio) else {
+            FileHandle.standardError.write("WARN: no default audio capture device\n".data(using: .utf8)!)
+            return
+        }
+        FileHandle.standardError.write("INFO: mic device name=\(device.localizedName) uid=\(device.uniqueID)\n".data(using: .utf8)!)
+
+        let input: AVCaptureDeviceInput
+        do { input = try AVCaptureDeviceInput(device: device) } catch {
+            FileHandle.standardError.write("WARN: mic AVCaptureDeviceInput failed: \(error.localizedDescription)\n".data(using: .utf8)!)
+            return
+        }
+        if session.canAddInput(input) { session.addInput(input) }
+        else {
+            FileHandle.standardError.write("WARN: mic canAddInput=false\n".data(using: .utf8)!)
+            return
+        }
+
+        let output = AVCaptureAudioDataOutput()
+        let delegate = MicDelegate(track: track)
+        MicCapture.delegate = delegate
+        let q = DispatchQueue(label: "claudely.mic", qos: .userInitiated)
+        output.setSampleBufferDelegate(delegate, queue: q)
+        if session.canAddOutput(output) { session.addOutput(output) }
+        else {
+            FileHandle.standardError.write("WARN: mic canAddOutput=false\n".data(using: .utf8)!)
+            return
+        }
+        session.commitConfiguration()
+
+        session.startRunning()
+        FileHandle.standardError.write("INFO: mic session running=\(session.isRunning)\n".data(using: .utf8)!)
+    }
+}
+
+// Single serial queue for all stdout writes so SCK + mic don't interleave inside
+// a length-prefixed frame and corrupt the parser.
+private let stdoutQueue = DispatchQueue(label: "claudely.stdout-serial")
+
 func writeFrame(track: UInt8, bytes: UnsafeBufferPointer<Int8>) {
-    var header = UInt32(bytes.count + 1).bigEndian
-    let stdout = FileHandle.standardOutput
-    withUnsafeBytes(of: &header) { stdout.write(Data($0)) }
-    stdout.write(Data([track]))
-    stdout.write(Data(buffer: bytes))
+    let payload = Data(buffer: bytes)
+    stdoutQueue.async {
+        var header = UInt32(payload.count + 1).bigEndian
+        let stdout = FileHandle.standardOutput
+        withUnsafeBytes(of: &header) { stdout.write(Data($0)) }
+        stdout.write(Data([track]))
+        stdout.write(payload)
+    }
 }

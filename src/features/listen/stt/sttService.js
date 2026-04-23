@@ -47,7 +47,7 @@ function start({ onFinal, onInterim, onState } = {}) {
         // Mono fallback is the default for now; multichannel adds fragility when
         // the mic track is silent (Electron headless) and Deepgram idle-closes.
         // Phase 6/7 can re-enable multichannel once mic input is reliable.
-        const mono = process.env.CLAUDELY_STT_MONO !== '0';
+        const mono = process.env.CLAUDELY_STT_MONO === '1';
         live = deepgram.listen.live({
             model: 'nova-3',
             diarize: true,
@@ -87,7 +87,7 @@ function start({ onFinal, onInterim, onState } = {}) {
 
     // In mono mode: send track-0 straight through. Skip track-1 (mic).
     // In multichannel mode: interleave track-0 and track-1 into stereo PCM.
-    const mono = process.env.CLAUDELY_STT_MONO !== '0';
+    const mono = process.env.CLAUDELY_STT_MONO === '1';
     const pending = { 0: Buffer.alloc(0), 1: Buffer.alloc(0) };
     const trackBytes = { 0: 0, 1: 0 };
     bus.on('pcm', ({ track, pcm }) => {

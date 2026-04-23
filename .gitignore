@@ -112,4 +112,5 @@ data/*.db-wal
 # Build output
 out/
 dist/
-build/ scratch/
+build/
+scratch/

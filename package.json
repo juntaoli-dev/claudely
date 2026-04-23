@@ -30,6 +30,7 @@
     },
     "license": "GPL-3.0",
     "dependencies": {
+        "@anthropic-ai/claude-agent-sdk": "^0.2.118",
         "@anthropic-ai/sdk": "^0.56.0",
         "@deepgram/sdk": "^4.9.1",
         "axios": "^1.10.0",

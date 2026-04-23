@@ -1,11 +1,28 @@
 // src/features/claude/claudeSession.js
-const { query: realQuery } = require('@anthropic-ai/claude-agent-sdk');
+//
+// @anthropic-ai/claude-agent-sdk is ESM. Electron main process is CommonJS,
+// so we import lazily via dynamic import() inside ask(). Tests inject queryFn
+// to bypass this entirely.
+
+let _realQueryPromise = null;
+function loadRealQuery() {
+  if (!_realQueryPromise) {
+    _realQueryPromise = import('@anthropic-ai/claude-agent-sdk').then((m) => m.query);
+  }
+  return _realQueryPromise;
+}
 
 class ClaudeSession {
-  constructor({ cwd, model = 'claude-sonnet-4-6', queryFn = realQuery }) {
+  constructor({ cwd, model = 'claude-sonnet-4-6', queryFn = null }) {
     this.cwd = cwd;
     this.model = model;
-    this._query = queryFn;
+    this._query = queryFn; // null means: resolve lazily from the SDK
+  }
+
+  async _getQuery() {
+    if (this._query) return this._query;
+    this._query = await loadRealQuery();
+    return this._query;
   }
 
   async ask({ question, transcriptTail, imagePath, onDelta }) {
@@ -16,7 +33,8 @@ class ClaudeSession {
     const context = transcriptTail ? `Recent transcript:\n${transcriptTail}\n\nQuestion: ${question}` : question;
     content.push({ type: 'text', text: context });
 
-    const iterator = this._query({
+    const queryFn = await this._getQuery();
+    const iterator = queryFn({
       prompt: { role: 'user', content },
       options: {
         cwd: this.cwd,

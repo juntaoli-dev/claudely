@@ -1,8 +1,10 @@
 const { BrowserWindow } = require('electron');
+const os = require('os');
 const getWindowManager = () => require('../../window/windowManager');
 const internalBridge = require('../../bridge/internalBridge');
 const sessionRepository = require('../common/repositories/session');
 const askRepository = require('./repositories');
+const { ClaudeSession } = require('../claude/claudeSession');
 
 const getWindowPool = () => {
     try {
@@ -11,6 +13,22 @@ const getWindowPool = () => {
         return null;
     }
 };
+
+let sharedSession;
+function getSession() {
+    if (!sharedSession) {
+        sharedSession = new ClaudeSession({
+            cwd: process.env.CLAUDELY_PROJECT_CWD || `${os.homedir()}/Documents/creative_studio_repo`,
+            model: process.env.CLAUDELY_MODEL || 'claude-sonnet-4-6',
+        });
+    }
+    return sharedSession;
+}
+
+// Plan-shape API. Consumed by featureBridge ask:question handler and Phase 5 FireDispatcher.
+async function ask({ question, transcriptTail = '', imagePath = null, onDelta }) {
+    return getSession().ask({ question, transcriptTail, imagePath, onDelta });
+}
 
 class AskService {
     constructor() {
@@ -23,7 +41,7 @@ class AskService {
             currentResponse: '',
             showTextInput: true,
         };
-        console.log('[AskService] Service instance created (Claude SDK wired in Phase 1).');
+        console.log('[AskService] Service instance created.');
     }
 
     _broadcastState() {
@@ -82,28 +100,73 @@ class AskService {
         return { success: true };
     }
 
-    async sendMessage(userPrompt, conversationHistoryRaw = []) {
+    async sendMessage(userPrompt, _conversationHistoryRaw = []) {
+        const question = (userPrompt || '').trim();
+        if (!question) return { success: true };
+
         internalBridge.emit('window:requestVisibility', { name: 'ask', visible: true });
         this.state = {
             ...this.state,
-            isLoading: false,
+            isVisible: true,
+            isLoading: true,
             isStreaming: false,
-            currentQuestion: userPrompt,
-            currentResponse: 'Claude Agent SDK provider wired in Phase 1.',
-            showTextInput: true,
+            currentQuestion: question,
+            currentResponse: '',
+            showTextInput: false,
         };
         this._broadcastState();
 
+        let sessionId;
         try {
-            const sessionId = await sessionRepository.getOrCreateActive('ask');
-            await askRepository.addAiMessage({ sessionId, role: 'user', content: (userPrompt || '').trim() });
+            sessionId = await sessionRepository.getOrCreateActive('ask');
+            await askRepository.addAiMessage({ sessionId, role: 'user', content: question });
         } catch (e) {
             console.warn('[AskService] Could not persist prompt:', e.message);
         }
 
-        return { success: true };
+        try {
+            let full = '';
+            const onDelta = (text) => {
+                full += text;
+                this.state.isLoading = false;
+                this.state.isStreaming = true;
+                this.state.currentResponse = full;
+                this._broadcastState();
+            };
+
+            await ask({ question, transcriptTail: '', imagePath: null, onDelta });
+
+            this.state.isStreaming = false;
+            this.state.showTextInput = true;
+            this._broadcastState();
+
+            if (sessionId && full) {
+                try {
+                    await askRepository.addAiMessage({ sessionId, role: 'assistant', content: full });
+                } catch (e) {
+                    console.warn('[AskService] Could not persist assistant reply:', e.message);
+                }
+            }
+            return { success: true };
+        } catch (error) {
+            console.error('[AskService] Error during message processing:', error);
+            this.state.isLoading = false;
+            this.state.isStreaming = false;
+            this.state.showTextInput = true;
+            this._broadcastState();
+            const askWin = getWindowPool()?.get('ask');
+            if (askWin && !askWin.isDestroyed()) {
+                askWin.webContents.send('ask-response-stream-error', { error: error.message || String(error) });
+            }
+            return { success: false, error: error.message };
+        }
     }
 }
 
 const askService = new AskService();
+
 module.exports = askService;
+module.exports.ask = ask;
+module.exports.sendMessage = askService.sendMessage.bind(askService);
+module.exports.toggleAskButton = askService.toggleAskButton.bind(askService);
+module.exports.closeAskWindow = askService.closeAskWindow.bind(askService);

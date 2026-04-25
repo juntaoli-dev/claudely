@@ -720,6 +720,7 @@ function createWindows() {
     }
 
     header.setContentProtection(isContentProtectionOn);
+    header.setAlwaysOnTop(true, 'screen-saver');
     header.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     
     // Open DevTools in development

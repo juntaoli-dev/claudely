@@ -4,12 +4,41 @@
 // so we import lazily via dynamic import() inside ask(). Tests inject queryFn
 // to bypass this entirely.
 
+const fs = require('fs');
+const cp = require('child_process');
+
 let _realQueryPromise = null;
 function loadRealQuery() {
   if (!_realQueryPromise) {
     _realQueryPromise = import('@anthropic-ai/claude-agent-sdk').then((m) => m.query);
   }
   return _realQueryPromise;
+}
+
+// Resolve the local `claude` CLI at runtime. The SDK's bundled cli.js lives
+// inside the app.asar archive and can't be spawned from there (ENOTDIR), so
+// the packaged app needs to explicitly hand the SDK an on-disk binary.
+let _cliPathCache;
+function resolveClaudeCliPath() {
+  if (_cliPathCache !== undefined) return _cliPathCache;
+  if (process.env.CLAUDE_CLI_PATH && fs.existsSync(process.env.CLAUDE_CLI_PATH)) {
+    return (_cliPathCache = process.env.CLAUDE_CLI_PATH);
+  }
+  // Try `which claude` against the augmented PATH.
+  try {
+    const out = cp.execSync('which claude', { env: process.env, encoding: 'utf8' }).trim();
+    if (out && fs.existsSync(out)) return (_cliPathCache = out);
+  } catch (_) {}
+  // Probe common install locations.
+  const home = require('os').homedir();
+  const candidates = [
+    `${home}/.local/bin/claude`,
+    `${home}/.bun/bin/claude`,
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+  ];
+  for (const c of candidates) if (fs.existsSync(c)) return (_cliPathCache = c);
+  return (_cliPathCache = null);
 }
 
 class ClaudeSession {
@@ -52,6 +81,9 @@ class ClaudeSession {
       disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
     };
     if (this.model) options.model = this.model;
+    const cli = resolveClaudeCliPath();
+    if (cli) options.pathToClaudeCodeExecutable = cli;
+    else console.warn('[ClaudeSession] no `claude` CLI found on disk; SDK will fall back to its bundled cli.js (likely ENOTDIR inside asar).');
     const iterator = queryFn({ prompt, options });
 
     for await (const msg of iterator) {

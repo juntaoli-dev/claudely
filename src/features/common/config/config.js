@@ -36,7 +36,9 @@ class Config {
             wakePhrases: ['hey claude', 'hey claudely'],
             projectCwd: path.join(os.homedir(), 'Documents/creative_studio_repo'),
             deepgramApiKey: '',
-            model: 'claude-sonnet-4-6',
+            // Empty/null means: defer to the local `claude` CLI's configured
+            // model (Enterprise auth carries the user's selection).
+            model: '',
             zoomBundleId: 'us.zoom.xos',
         };
         

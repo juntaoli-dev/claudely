@@ -13,9 +13,11 @@ function loadRealQuery() {
 }
 
 class ClaudeSession {
-  constructor({ cwd, model = 'claude-sonnet-4-6', queryFn = null }) {
+  // model: pass null/empty to inherit whatever the local `claude` CLI is
+  // configured to use. Only override if you explicitly want a different model.
+  constructor({ cwd, model = null, queryFn = null }) {
     this.cwd = cwd;
-    this.model = model;
+    this.model = model || null;
     this._query = queryFn; // null means: resolve lazily from the SDK
   }
 
@@ -44,15 +46,13 @@ class ClaudeSession {
     const prompt = parts.join('\n\n');
 
     const queryFn = await this._getQuery();
-    const iterator = queryFn({
-      prompt,
-      options: {
-        cwd: this.cwd,
-        model: this.model,
-        allowedTools: ['Read', 'Grep', 'Glob', 'Bash', 'WebFetch'],
-        disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
-      },
-    });
+    const options = {
+      cwd: this.cwd,
+      allowedTools: ['Read', 'Grep', 'Glob', 'Bash', 'WebFetch'],
+      disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
+    };
+    if (this.model) options.model = this.model;
+    const iterator = queryFn({ prompt, options });
 
     for await (const msg of iterator) {
       if (msg.type === 'assistant') {

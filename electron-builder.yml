@@ -74,6 +74,10 @@ mac:
     minimumSystemVersion: '11.0'
     hardenedRuntime: true
     gatekeeperAssess: false
+    # Set to "Claudely Dev Local" once `security set-key-partition-list` has
+    # been run interactively to grant codesign permission to the self-signed
+    # cert. Defaults to null so the build pipeline doesn't hang waiting for a
+    # GUI password prompt.
     identity: null
     entitlements: entitlements.plist
     entitlementsInherit: entitlements.plist

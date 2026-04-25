@@ -86,6 +86,10 @@ mac:
         NSScreenCaptureUsageDescription: "Claudely captures meeting audio and the current screen so it can answer questions about what's on the call."
         NSCameraUsageDescription: "Claudely never uses the camera; this declaration is required by ScreenCaptureKit."
         NSAppleEventsUsageDescription: "Claudely uses Apple Events for window management."
+        NSDocumentsFolderUsageDescription: "Claudely needs to read your code repos so Claude can answer repo-aware questions."
+        NSDesktopFolderUsageDescription: "Claudely needs to read screenshots and code on your Desktop when you ask repo-aware questions."
+        NSDownloadsFolderUsageDescription: "Claudely needs to read files in Downloads when you reference them in questions."
+        NSRemovableVolumesUsageDescription: "Claudely needs read access to external volumes when your repos live there."
     target:
       - target: dmg
         arch: universal

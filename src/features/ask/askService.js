@@ -144,6 +144,10 @@ class AskService {
                     });
                 }
                 if (!ok) {
+                    // Surface the error in the answer pane so users see *why*
+                    // it failed instead of an empty result.
+                    this.state.currentResponse = `error: ${errorMsg || 'unknown'}`;
+                    this._broadcastState();
                     const askWin = getWindowPool()?.get('ask');
                     if (askWin && !askWin.isDestroyed()) {
                         askWin.webContents.send('ask-response-stream-error', { error: errorMsg });

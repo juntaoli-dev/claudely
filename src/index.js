@@ -7,6 +7,24 @@
 
 require('dotenv').config();
 
+// When launched from Spotlight/Finder, Electron inherits launchd's sparse PATH
+// (/usr/bin:/bin:/usr/sbin:/sbin) and can't find the claude CLI, brew, etc.
+// Augment with common install locations so the Claude Agent SDK subprocess
+// resolves.
+{
+    const home = require('os').homedir();
+    const extras = [
+        `${home}/.local/bin`,
+        `${home}/.bun/bin`,
+        '/opt/homebrew/bin',
+        '/opt/homebrew/sbin',
+        '/usr/local/bin',
+    ];
+    const current = (process.env.PATH || '').split(':').filter(Boolean);
+    const merged = [...extras, ...current].filter((p, i, a) => a.indexOf(p) === i);
+    process.env.PATH = merged.join(':');
+}
+
 if (require('electron-squirrel-startup')) {
     process.exit(0);
 }

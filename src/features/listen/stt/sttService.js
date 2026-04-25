@@ -25,14 +25,19 @@ function start({ onFinal, onInterim, onState } = {}) {
     );
     const store = new TranscriptStore({ maxMinutes: 60, persistPath });
 
-    const binaryPath = path.join(__dirname, '../../../ui/assets/bin/audio-capture');
+    // In a packaged app the path lands inside app.asar (not executable). The
+    // binary is copied to app.asar.unpacked via electron-builder asarUnpack —
+    // remap it here so spawn() sees the unpacked Mach-O.
+    const binaryPath = path.join(__dirname, '../../../ui/assets/bin/audio-capture')
+        .replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
     const bundleId = process.env.CLAUDELY_ZOOM_BUNDLE_ID || config.get('zoomBundleId') || 'us.zoom.xos';
     const bus = new AudioBus({ binaryPath, bundleId });
 
     // Classifier + FireDispatcher are constructed here so a single listen session
     // owns the full pipeline. Phase 5 replaces the FireDispatcher stub with the
     // real queue + wake-phrase + auto-answer gated dispatcher.
-    const classifierPath = path.join(__dirname, '../../../ui/assets/bin/classifier');
+    const classifierPath = path.join(__dirname, '../../../ui/assets/bin/classifier')
+        .replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
     const classifier = new ClassifierBus({ binaryPath: classifierPath });
     classifier.start();
     // Real dispatcher now: passes store + classifier + real Claude + real

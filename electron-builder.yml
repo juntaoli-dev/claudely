@@ -34,6 +34,8 @@ extraResources:
 
 asarUnpack:
     - "src/ui/assets/SystemAudioDump"
+    - "src/ui/assets/bin/audio-capture"
+    - "src/ui/assets/bin/classifier"
     - "**/node_modules/sharp/**/*"
     - "**/node_modules/@img/**/*"
 

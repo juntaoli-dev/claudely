@@ -15,8 +15,8 @@ const { buildDispatcher } = require('../../fire/instance');
 const config = require('../../common/config/config');
 
 function start({ onFinal, onInterim, onState } = {}) {
-    const key = process.env.DEEPGRAM_API_KEY;
-    if (!key) throw new Error('DEEPGRAM_API_KEY missing');
+    const key = process.env.DEEPGRAM_API_KEY || config.get('deepgramApiKey');
+    if (!key) throw new Error('DEEPGRAM_API_KEY missing — set env var or deepgramApiKey in ~/.claudely/config.json');
 
     const persistPath = path.join(
         os.homedir(),

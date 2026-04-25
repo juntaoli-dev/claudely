@@ -26,6 +26,13 @@ class ClaudeSession {
   }
 
   async ask({ question, transcriptTail, imagePath, onDelta }) {
+    if (process.env.ANTHROPIC_DRY_RUN === '1') {
+      const payload = JSON.stringify({ question, transcriptTail, imagePath });
+      console.log('[DRY-RUN]', payload);
+      onDelta?.('[dry-run]');
+      return;
+    }
+
     const parts = [];
     if (transcriptTail) {
       parts.push(`Recent transcript:\n${transcriptTail}`);

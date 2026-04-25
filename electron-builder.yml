@@ -74,11 +74,10 @@ mac:
     minimumSystemVersion: '11.0'
     hardenedRuntime: true
     gatekeeperAssess: false
-    # Set to "Claudely Dev Local" once `security set-key-partition-list` has
-    # been run interactively to grant codesign permission to the self-signed
-    # cert. Defaults to null so the build pipeline doesn't hang waiting for a
-    # GUI password prompt.
-    identity: null
+    # Stable self-signed cert. First build pops one keychain dialog asking for
+    # codesign access; click "Always Allow" and every future build is silent
+    # AND TCC grants persist (cdhash is stable across rebuilds).
+    identity: Claudely Dev Local
     entitlements: entitlements.plist
     entitlementsInherit: entitlements.plist
     extendInfo:

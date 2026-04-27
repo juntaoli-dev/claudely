@@ -223,6 +223,21 @@ app.whenReady().then(async () => {
 
         createWindows();
 
+        // Auto-start Listen so the transcript starts flowing the moment the
+        // app opens (Cluely-style). User can panic-mute via Cmd+Shift+M or set
+        // autoListen=false in ~/.claudely/config.json to opt out.
+        const _config = require('./features/common/config/config');
+        if (_config.get('autoListen')) {
+            setTimeout(async () => {
+                try {
+                    console.log('[autoListen] starting STT pipeline');
+                    await listenService.start();
+                } catch (e) {
+                    console.warn('[autoListen] failed:', e.message);
+                }
+            }, 1500);
+        }
+
         if (process.env.CLAUDELY_DEBUG_STT) {
             setTimeout(() => {
                 try {

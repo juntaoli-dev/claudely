@@ -32,6 +32,9 @@ class Config {
             enableDebugLogging: false,
 
             // Claudely runtime config
+            // Auto-start Listen pipeline on launch (Cluely-style always-on).
+            // Set to false to require an explicit Listen click.
+            autoListen: true,
             autoAnswer: false,
             wakePhrases: ['hey claude', 'hey claudely'],
             projectCwd: path.join(os.homedir(), 'Documents/creative_studio_repo'),

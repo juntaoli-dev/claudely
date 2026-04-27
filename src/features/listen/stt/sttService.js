@@ -11,7 +11,7 @@ const { AudioBus } = require('../../audio/audioBus');
 const { TranscriptStore } = require('../transcriptStore');
 const { ClassifierBus } = require('../../classify/classifierBus');
 const { matchWake } = require('../../classify/wakePhrase');
-const { buildDispatcher } = require('../../fire/instance');
+const { buildDispatcher, setActiveListenContext, clearActiveListenContext } = require('../../fire/instance');
 const config = require('../../common/config/config');
 
 function start({ onFinal, onInterim, onState } = {}) {
@@ -43,10 +43,10 @@ function start({ onFinal, onInterim, onState } = {}) {
     // Real dispatcher now: passes store + classifier + real Claude + real
     // screen grabber. onState surfaces delta/done/error/queued up to the
     // renderer via the same channel STT uses.
-    const fireDispatcher = buildDispatcher({ store: null, classifier, onState });
-    // Swap store in after the store var above is captured; buildDispatcher
-    // received a no-op tail stub, so re-attach the real store:
-    fireDispatcher.store = store;
+    // Register live store + classifier so any manual ask sees the same
+    // transcript history.
+    setActiveListenContext({ store, classifier });
+    const fireDispatcher = buildDispatcher({ store, classifier, onState });
 
     let live = null;
     let liveReady = false;
@@ -187,6 +187,7 @@ function start({ onFinal, onInterim, onState } = {}) {
             try { classifier.stop(); } catch (_) {}
             try { live?.finish?.(); } catch (_) {}
             try { store.close(); } catch (_) {}
+            try { clearActiveListenContext(); } catch (_) {}
         },
     };
 }

@@ -45,6 +45,15 @@ module.exports = {
 
     // App
     ipcMain.handle('quit-application', () => app.quit());
+    // Content-protection toggle (overlay invisible to screen-share + screencapture).
+    ipcMain.handle('window:toggle-content-protection', () => {
+        const wm = require('../window/windowManager');
+        return wm.toggleContentProtection();
+    });
+    ipcMain.handle('window:get-content-protection', () => {
+        const wm = require('../window/windowManager');
+        return wm.getContentProtectionStatus();
+    });
 
     // General
     ipcMain.handle('get-preset-templates', () => presetRepository.getPresetTemplates());

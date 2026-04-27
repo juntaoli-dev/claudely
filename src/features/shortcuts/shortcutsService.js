@@ -215,6 +215,19 @@ class ShortcutsService {
             });
             Promise.resolve(listenService.closeSession?.()).catch(() => {});
         });
+        // Cmd+Shift+I — toggle content-protection (overlay invisible to
+        // screen-share / screencapture). Hotkey + state event.
+        globalShortcut.register(`${modifier}+Shift+I`, () => {
+            const wm = require('../../window/windowManager');
+            const next = wm.toggleContentProtection();
+            const value = (typeof next === 'boolean') ? next : wm.getContentProtectionStatus?.();
+            console.log(`[Shortcuts] contentProtection → ${value}`);
+            this.windowPool.forEach(win => {
+                if (win && !win.isDestroyed()) {
+                    try { win.webContents.send('state:update', { type: 'contentProtection', value }); } catch (_) {}
+                }
+            });
+        });
 
         // --- User-configurable shortcuts ---
         if (header?.currentHeaderState === 'apikey') {

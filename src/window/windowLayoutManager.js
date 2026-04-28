@@ -266,20 +266,20 @@ class WindowLayoutManager {
         return { x: newX, y: newY, width: shortcutBounds.width, height: shortcutBounds.height };
     }
 
-    calculateStepMovePosition(header, direction) {
+    calculateStepMovePosition(header, direction, stepOverride) {
         if (!header) return null;
         const currentBounds = header.getBounds();
-        const stepSize = 80; // 이동 간격
+        const stepSize = stepOverride || 80;
         let targetX = currentBounds.x;
         let targetY = currentBounds.y;
-    
+
         switch (direction) {
             case 'left': targetX -= stepSize; break;
             case 'right': targetX += stepSize; break;
             case 'up': targetY -= stepSize; break;
             case 'down': targetY += stepSize; break;
         }
-    
+
         return this.calculateClampedPosition(header, { x: targetX, y: targetY });
     }
     

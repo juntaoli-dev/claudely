@@ -142,10 +142,14 @@ function setupWindowController(windowPool, layoutManager, movementManager) {
         }
     });
 
-    internalBridge.on('window:moveStep', ({ direction }) => {
+    internalBridge.on('window:moveStep', ({ direction, hold }) => {
         const header = windowPool.get('header');
-        if (header) { 
-            const newHeaderPosition = layoutManager.calculateStepMovePosition(header, direction);
+        if (header) {
+            // Hold-driven repeats arrive at ~30 Hz; use a smaller per-tick step
+            // so the cumulative speed is comfortable. Tap-driven (no hold) keeps
+            // the larger step for snappy single-press moves.
+            const step = hold ? 22 : 80;
+            const newHeaderPosition = layoutManager.calculateStepMovePosition(header, direction, step);
             if (!newHeaderPosition) return;
     
             const futureHeaderBounds = { ...header.getBounds(), ...newHeaderPosition };

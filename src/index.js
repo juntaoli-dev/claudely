@@ -238,6 +238,15 @@ app.whenReady().then(async () => {
             }, 1500);
         }
 
+        // Hold-to-move via global keyboard hook. Needs Accessibility TCC.
+        try {
+            const keyhold = require('./features/shortcuts/keyholdManager');
+            keyhold.start();
+            app.on('before-quit', () => { try { keyhold.stop(); } catch (_) {} });
+        } catch (e) {
+            console.warn('[KeyHold] init failed:', e.message);
+        }
+
         if (process.env.CLAUDELY_DEBUG_STT) {
             setTimeout(() => {
                 try {

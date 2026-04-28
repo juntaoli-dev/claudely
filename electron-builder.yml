@@ -38,6 +38,7 @@ asarUnpack:
     - "src/ui/assets/bin/classifier"
     - "**/node_modules/sharp/**/*"
     - "**/node_modules/@img/**/*"
+    - "**/node_modules/uiohook-napi/**/*"
 
 # Windows configuration
 win:

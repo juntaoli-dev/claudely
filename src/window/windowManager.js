@@ -196,21 +196,34 @@ function setupWindowController(windowPool, layoutManager, movementManager) {
         }
     });
     internalBridge.on('window:adjustWindowHeight', ({ winName, targetHeight }) => {
-        console.log(`[Layout Debug] adjustWindowHeight: targetHeight=${targetHeight}`);
         const senderWindow = windowPool.get(winName);
-        if (senderWindow) {
-            const newBounds = layoutManager.calculateWindowHeightAdjustment(senderWindow, targetHeight);
-            
-            const wasResizable = senderWindow.isResizable();
-            if (!wasResizable) senderWindow.setResizable(true);
+        if (!senderWindow) return;
 
-            movementManager.animateWindowBounds(senderWindow, newBounds, {
-                onComplete: () => {
-                    if (!wasResizable) senderWindow.setResizable(false);
-                    updateChildWindowLayouts(true);
-                }
-            });
-        }
+        // Recompute the full feature-window layout off the header's *current*
+        // position so a height adjust can't fight an in-flight arrow move.
+        // This stops listen from snapping back to a stale x while the user
+        // is dragging the overlay around with Cmd+Arrow.
+        const visibleWindows = {};
+        ['listen', 'ask'].forEach((name) => {
+            const w = windowPool.get(name);
+            if (w && !w.isDestroyed() && w.isVisible()) visibleWindows[name] = true;
+        });
+        const layout = layoutManager.calculateFeatureWindowLayout(visibleWindows);
+        const fromLayout = layout?.[winName];
+        const sized = layoutManager.calculateWindowHeightAdjustment(senderWindow, targetHeight);
+        const newBounds = fromLayout
+            ? { x: fromLayout.x, y: fromLayout.y, width: fromLayout.width || sized.width, height: sized.height }
+            : sized;
+
+        const wasResizable = senderWindow.isResizable();
+        if (!wasResizable) senderWindow.setResizable(true);
+
+        movementManager.animateWindowBounds(senderWindow, newBounds, {
+            onComplete: () => {
+                if (!wasResizable) senderWindow.setResizable(false);
+                updateChildWindowLayouts(true);
+            }
+        });
     });
 }
 

@@ -94,6 +94,10 @@ out/
 .specstory
 .specstory/
 
+# Claude Code worktrees
+.claude/
+
+# Claudely runtime
 data/claudely.db
 web/backend/__pycache__/
 web/venv/

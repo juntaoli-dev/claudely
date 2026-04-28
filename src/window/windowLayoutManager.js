@@ -82,10 +82,39 @@ class WindowLayoutManager {
         const { x: workAreaX, y: workAreaY, width: screenWidth, height: screenHeight } = display.workArea;
 
         const PAD = 5;
+        const GAP = 8;
         const buttonPadding = 170;
 
-        const x = headerBounds.x + headerBounds.width - settingsBounds.width + buttonPadding;
-        const y = headerBounds.y + headerBounds.height + PAD;
+        let x = headerBounds.x + headerBounds.width - settingsBounds.width + buttonPadding;
+        let y = headerBounds.y + headerBounds.height + PAD;
+
+        // Avoid overlap with visible listen/ask panes that sit below header.
+        const rectsIntersect = (a, b) =>
+            !(a.x + a.width <= b.x || b.x + b.width <= a.x ||
+              a.y + a.height <= b.y || b.y + b.height <= a.y);
+
+        const candidate = () => ({ x, y, width: settingsBounds.width, height: settingsBounds.height });
+
+        const others = ['listen', 'ask']
+            .map((name) => this.windowPool.get(name))
+            .filter((w) => w && !w.isDestroyed() && w.isVisible())
+            .map((w) => w.getBounds());
+
+        // If overlap, push x right of the rightmost overlapping rect (and clamp).
+        for (let i = 0; i < 4; i++) {
+            const overlaps = others.filter((b) => rectsIntersect(candidate(), b));
+            if (overlaps.length === 0) break;
+            const rightmost = Math.max(...overlaps.map((b) => b.x + b.width));
+            x = rightmost + GAP;
+            // If we ran past the screen edge, fall through to drop below the
+            // overlapping panes instead.
+            if (x + settingsBounds.width > workAreaX + screenWidth - 10) {
+                x = headerBounds.x + headerBounds.width - settingsBounds.width + buttonPadding;
+                const lowest = Math.max(...overlaps.map((b) => b.y + b.height));
+                y = lowest + GAP;
+                break;
+            }
+        }
 
         const clampedX = Math.max(workAreaX + 10, Math.min(workAreaX + screenWidth - settingsBounds.width - 10, x));
         const clampedY = Math.max(workAreaY + 10, Math.min(workAreaY + screenHeight - settingsBounds.height - 10, y));

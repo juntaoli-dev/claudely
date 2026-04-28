@@ -42,8 +42,6 @@ let movementManager = null;
 
 
 function updateChildWindowLayouts(animated = true) {
-    // if (movementManager.isAnimating) return;
-
     const visibleWindows = {};
     const listenWin = windowPool.get('listen');
     const askWin = windowPool.get('ask');
@@ -54,10 +52,24 @@ function updateChildWindowLayouts(animated = true) {
         visibleWindows.ask = true;
     }
 
-    if (Object.keys(visibleWindows).length === 0) return;
+    if (Object.keys(visibleWindows).length > 0) {
+        const newLayout = layoutManager.calculateFeatureWindowLayout(visibleWindows);
+        movementManager.animateLayout(newLayout, animated);
+    }
 
-    const newLayout = layoutManager.calculateFeatureWindowLayout(visibleWindows);
-    movementManager.animateLayout(newLayout, animated);
+    // Settings panel uses an independent placement that explicitly avoids
+    // overlap with listen/ask. Re-run the calc whenever the layout changes
+    // (header move, transcript expand, etc.) so it bounces out of the way.
+    const settingsWin = windowPool.get('settings');
+    if (settingsWin && !settingsWin.isDestroyed() && settingsWin.isVisible()) {
+        const sp = layoutManager.calculateSettingsWindowPosition();
+        if (sp) {
+            const sb = settingsWin.getBounds();
+            const target = { x: sp.x, y: sp.y, width: sb.width, height: sb.height };
+            if (animated) movementManager.animateWindowBounds(settingsWin, target);
+            else settingsWin.setBounds(target);
+        }
+    }
 }
 
 const showSettingsWindow = () => {

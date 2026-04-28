@@ -3,8 +3,9 @@ const { screen } = require('electron');
 class SmoothMovementManager {
     constructor(windowPool) {
         this.windowPool = windowPool;
-        this.stepSize = 80;
-        this.animationDuration = 300;
+        // Smaller step + shorter ease feels chainable when arrows are held.
+        this.stepSize = 56;
+        this.animationDuration = 140;
         this.headerPosition = { x: 0, y: 0 };
         this.isAnimating = false;
         this.hiddenPosition = null;
@@ -21,9 +22,9 @@ class SmoothMovementManager {
      */
     _isWindowValid(win) {
         if (!win || win.isDestroyed()) {
-            // 해당 창의 타이머가 있으면 정리
             if (this.animationTimers.has(win)) {
-                clearTimeout(this.animationTimers.get(win));
+                try { clearImmediate(this.animationTimers.get(win)); } catch (_) {}
+                try { clearTimeout(this.animationTimers.get(win)); } catch (_) {}
                 this.animationTimers.delete(win);
             }
             return false;
@@ -67,7 +68,7 @@ class SmoothMovementManager {
             win.setBounds({ x: Math.round(x), y: Math.round(y), width, height });
 
             if (p < 1) {
-                setTimeout(step, 8);
+                setImmediate(step);
             } else {
                 this.layoutManager.updateLayout();
                 if (onComplete) {
@@ -106,7 +107,8 @@ class SmoothMovementManager {
     
     animateWindowBounds(win, targetBounds, options = {}) {
         if (this.animationTimers.has(win)) {
-            clearTimeout(this.animationTimers.get(win));
+            try { clearImmediate(this.animationTimers.get(win)); } catch (_) {}
+            try { clearTimeout(this.animationTimers.get(win)); } catch (_) {}
         }
 
         if (!this._isWindowValid(win)) {
@@ -138,7 +140,7 @@ class SmoothMovementManager {
             win.setBounds(newBounds);
     
             if (progress < 1) {
-                const timerId = setTimeout(step, 8);
+                const timerId = setImmediate(step);
                 this.animationTimers.set(win, timerId);
             } else {
                 win.setBounds(targetBounds);

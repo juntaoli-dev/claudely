@@ -133,12 +133,33 @@ class ListenService {
 
     async closeSession() {
         this.sendToRenderer('change-listen-capture-state', { status: 'stop' });
+        const finishedStore = this.active?.store || null;
         try {
             this.active?.stop();
         } catch (e) {
             console.warn('[ListenService] stop error:', e.message);
         }
         this.active = null;
+
+        // Copy this session's transcript .jsonl into a sync folder if one is
+        // configured. Drive Desktop / iCloud Drive / Dropbox handle the
+        // actual upload.
+        try {
+            const path = require('path');
+            const fs = require('fs');
+            const config = require('../common/config/config');
+            const dst = config.get('transcriptUploadDir');
+            const src = finishedStore?.getPersistPath?.();
+            if (dst && src && fs.existsSync(src)) {
+                fs.mkdirSync(dst, { recursive: true });
+                const target = path.join(dst, path.basename(src));
+                fs.copyFileSync(src, target);
+                console.log(`[ListenService] transcript copied → ${target}`);
+            }
+        } catch (e) {
+            console.warn('[ListenService] transcript copy failed:', e.message);
+        }
+
         if (this.currentSessionId) {
             try { await sessionRepository.end(this.currentSessionId); } catch (_) {}
             this.currentSessionId = null;

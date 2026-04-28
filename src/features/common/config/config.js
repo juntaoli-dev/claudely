@@ -43,6 +43,11 @@ class Config {
             // model (Enterprise auth carries the user's selection).
             model: '',
             zoomBundleId: 'us.zoom.xos',
+            // When non-empty, listenService copies the per-session transcript
+            // .jsonl into this directory on close. Point at a Drive-synced
+            // folder under ~/Library/CloudStorage/GoogleDrive-<email>/...
+            // and Google Drive Desktop will upload it automatically.
+            transcriptUploadDir: '',
         };
         
         this.config = { ...this.defaults };

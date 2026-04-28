@@ -41,6 +41,10 @@ class TranscriptStore {
     close() {
         try { this._stream?.end(); } catch (_) {}
     }
+
+    getPersistPath() {
+        return this.persistPath || null;
+    }
 }
 
 module.exports = { TranscriptStore };

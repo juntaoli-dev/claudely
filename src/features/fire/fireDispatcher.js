@@ -83,12 +83,16 @@ class FireDispatcher {
 
         // Prepend meeting context (calendar event title, attendees, agenda)
         // so Claude knows which meeting we're in without the user repeating it.
-        try {
-            const { getMeetingContext, formatForPrompt } = require('../calendar/calendarContext');
-            const events = await getMeetingContext();
-            const ctx = formatForPrompt(events);
-            if (ctx) transcriptTail = `${ctx}\n\n${transcriptTail || ''}`.trim();
-        } catch (_) { /* calendar is optional context */ }
+        // Skipped in tests (Vitest) and when CLAUDELY_SKIP_CALENDAR=1, since
+        // spawning the EventKit helper would slow unit tests by ~200 ms each.
+        if (!process.env.VITEST && process.env.CLAUDELY_SKIP_CALENDAR !== '1') {
+            try {
+                const { getMeetingContext, formatForPrompt } = require('../calendar/calendarContext');
+                const events = await getMeetingContext();
+                const ctx = formatForPrompt(events);
+                if (ctx) transcriptTail = `${ctx}\n\n${transcriptTail || ''}`.trim();
+            } catch (_) { /* calendar is optional context */ }
+        }
         try {
             await this.claude.ask({
                 question,

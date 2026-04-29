@@ -30,9 +30,9 @@ describe('listen integration', () => {
             await d.maybeFire(line);
         }
 
-        // Drain the queue: maybeFire returns immediately after queueing the
-        // second hit, so wait for in-flight + queued to settle.
-        for (let i = 0; i < 50 && (claude.ask.mock.calls.length < 2 || d.queueSize() > 0); i++) {
+        // Drain in-flight + queued. Each fire awaits the screen grabber, the
+        // calendar context, then claude. Loop a generous number of microtasks.
+        for (let i = 0; i < 200 && (claude.ask.mock.calls.length < 2 || d.queueSize() > 0); i++) {
             await new Promise((r) => setImmediate(r));
         }
 

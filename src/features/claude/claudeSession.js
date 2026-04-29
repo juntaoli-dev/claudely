@@ -97,20 +97,17 @@ class ClaudeSession {
             onDelta?.(block.text);
             onEvent?.({ kind: 'text', text: block.text });
           } else if (block.type === 'tool_use') {
-            const summary = summarizeToolUse(block);
-            onDelta?.(`\n\n🔧 ${summary}\n`);
-            onEvent?.({ kind: 'tool_use', name: block.name, input: block.input });
+            // Don't pollute the answer pane with tool markers. They flow
+            // through onEvent only — caller decides how to render progress.
+            onEvent?.({ kind: 'tool_use', name: block.name, input: block.input, summary: summarizeToolUse(block) });
           } else if (block.type === 'thinking' && block.thinking) {
             onEvent?.({ kind: 'thinking', text: block.thinking });
           }
         }
       } else if (msg.type === 'user' && msg.message?.content) {
-        // Tool results come back as user-role content from the SDK harness.
         for (const block of msg.message.content) {
           if (block.type === 'tool_result') {
-            const summary = summarizeToolResult(block);
-            if (summary) onDelta?.(`✓ ${summary}\n`);
-            onEvent?.({ kind: 'tool_result', isError: !!block.is_error });
+            onEvent?.({ kind: 'tool_result', isError: !!block.is_error, summary: summarizeToolResult(block) });
           }
         }
       } else if (msg.type === 'result') {

@@ -14,6 +14,7 @@ export class AskView extends LitElement {
         headerText: { type: String },
         headerAnimating: { type: Boolean },
         isStreaming: { type: Boolean },
+        toolProgress: { type: String },
     };
 
     static styles = css`
@@ -721,6 +722,7 @@ export class AskView extends LitElement {
         this.headerText = 'AI Response';
         this.headerAnimating = false;
         this.isStreaming = false;
+        this.toolProgress = '';
 
         this.marked = null;
         this.hljs = null;
@@ -791,6 +793,7 @@ export class AskView extends LitElement {
                 this.currentQuestion = newState.currentQuestion;
                 this.isLoading       = newState.isLoading;
                 this.isStreaming     = newState.isStreaming;
+                this.toolProgress    = newState.toolProgress || '';
               
                 const wasHidden = !this.showTextInput;
                 this.showTextInput = newState.showTextInput;
@@ -994,9 +997,18 @@ export class AskView extends LitElement {
         const responseContainer = this.shadowRoot.getElementById('responseContainer');
         if (!responseContainer) return;
     
+        // Show in-progress tool calls (e.g. Read / Grep / Bash) above the
+        // answer so the user sees activity while Claude is still thinking.
+        const progressBlock = (this.toolProgress && (this.isLoading || this.isStreaming))
+            ? `<div class="tool-progress" style="font-family: ui-monospace, Menlo, monospace; font-size: 11px; opacity: 0.65; margin-bottom: 8px; white-space: pre-wrap;">${
+                String(this.toolProgress).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
+              }</div>`
+            : '';
+
         // Check loading state
         if (this.isLoading) {
             responseContainer.innerHTML = `
+              ${progressBlock}
               <div class="loading-dots">
                 <div class="loading-dot"></div>
                 <div class="loading-dot"></div>

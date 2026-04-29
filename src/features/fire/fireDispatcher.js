@@ -99,6 +99,13 @@ class FireDispatcher {
                 transcriptTail,
                 imagePath,
                 onDelta: (text) => this.onState({ type: 'delta', text }),
+                onEvent: (e) => {
+                    // Forward structured progress events so the renderer can
+                    // show tool-call activity separately from answer text.
+                    if (e.kind === 'tool_use') this.onState({ type: 'tool', name: e.name, summary: e.summary });
+                    else if (e.kind === 'tool_result') this.onState({ type: 'tool-done', isError: e.isError, summary: e.summary });
+                    else if (e.kind === 'thinking') this.onState({ type: 'thinking-text', text: e.text });
+                },
             });
             this.onState({ type: 'done' });
         } catch (e) {

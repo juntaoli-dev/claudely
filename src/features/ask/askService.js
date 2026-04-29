@@ -156,12 +156,27 @@ class AskService {
                 resolve(ok ? { success: true } : { success: false, error: errorMsg });
             };
 
+            const toolLines = [];
             const dispatcher = getManualDispatcher({
                 onState: (s) => {
                     if (s.type === 'thinking') {
                         this.state.isLoading = true;
                         this.state.isStreaming = false;
+                        this.state.toolProgress = '';
                         this._broadcastState();
+                    } else if (s.type === 'tool') {
+                        toolLines.push(`🔧 ${s.summary}`);
+                        // keep last 6 lines so the badge doesn't grow forever.
+                        if (toolLines.length > 6) toolLines.shift();
+                        this.state.toolProgress = toolLines.join('\n');
+                        this._broadcastState();
+                    } else if (s.type === 'tool-done') {
+                        if (s.summary) {
+                            toolLines.push(`✓ ${s.summary}`);
+                            if (toolLines.length > 6) toolLines.shift();
+                            this.state.toolProgress = toolLines.join('\n');
+                            this._broadcastState();
+                        }
                     } else if (s.type === 'delta') {
                         full += s.text;
                         this.state.isLoading = false;

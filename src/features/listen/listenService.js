@@ -12,6 +12,20 @@ const internalBridge = require('../../bridge/internalBridge');
 
 const IDLE_PROMPT_MS = Number(process.env.CLAUDELY_IDLE_PROMPT_MS) || 60 * 60 * 1000; // 1 hour
 
+// Google Calendar exposes events at https://www.google.com/calendar/event?eid=<base64>
+// where <base64> is base64(`${icsUid} ${calendarId}`). We don't have the
+// calendar id here, but the uid alone is often enough for users since it's
+// unique per event in Google's system. Returns empty when uid missing.
+function buildGoogleCalLinkFromIcsUid(uid) {
+    if (!uid) return '';
+    try {
+        const b64 = Buffer.from(uid, 'utf8').toString('base64').replace(/=+$/, '');
+        return `https://calendar.google.com/calendar/u/0/r/eventedit/${b64}`;
+    } catch {
+        return '';
+    }
+}
+
 class ListenService {
     constructor() {
         this.active = null;          // { stop, store } from stt.start
@@ -189,6 +203,8 @@ class ListenService {
 
     async closeSession() {
         this._cancelIdlePrompt();
+        const recordedFrom = this.sessionStartedAt ? new Date(this.sessionStartedAt) : null;
+        const recordedTo = new Date();
         this.sessionStartedAt = null;
         this.sendToRenderer('change-listen-capture-state', { status: 'stop' });
         const finishedStore = this.active?.store || null;
@@ -199,9 +215,9 @@ class ListenService {
         }
         this.active = null;
 
-        // Copy this session's transcript .jsonl into a sync folder if one is
-        // configured. Drive Desktop / iCloud Drive / Dropbox handle the
-        // actual upload.
+        // Copy this session's transcript .jsonl + a meta sidecar (calendar
+        // event(s) that overlapped the recording) into the sync folder so the
+        // uploaded transcript carries full meeting context.
         try {
             const path = require('path');
             const fs = require('fs');
@@ -210,9 +226,44 @@ class ListenService {
             const src = finishedStore?.getPersistPath?.();
             if (dst && src && fs.existsSync(src)) {
                 fs.mkdirSync(dst, { recursive: true });
-                const target = path.join(dst, path.basename(src));
-                fs.copyFileSync(src, target);
-                console.log(`[ListenService] transcript copied → ${target}`);
+                const targetTranscript = path.join(dst, path.basename(src));
+                fs.copyFileSync(src, targetTranscript);
+                console.log(`[ListenService] transcript copied → ${targetTranscript}`);
+
+                // Build sidecar with calendar events that overlapped the window.
+                let events = [];
+                if (recordedFrom) {
+                    try {
+                        const cal = require('../calendar/calendarContext');
+                        events = await cal.fetchEventsForWindow(recordedFrom, recordedTo);
+                    } catch (e) {
+                        console.warn('[ListenService] calendar lookup for sidecar failed:', e.message);
+                    }
+                }
+                const meta = {
+                    schema: 1,
+                    transcript_file: path.basename(src),
+                    recorded_from: recordedFrom ? recordedFrom.toISOString() : null,
+                    recorded_to: recordedTo.toISOString(),
+                    duration_ms: recordedFrom ? (recordedTo - recordedFrom) : null,
+                    session_id: this.currentSessionId || null,
+                    events: events.map((e) => ({
+                        title: e.title,
+                        start: e.start,
+                        end: e.end,
+                        is_active_at_close: e.isActive,
+                        location: e.location || '',
+                        url: e.url || '',
+                        uid: e.uid || '',
+                        notes: e.notes || '',
+                        calendar: e.calendar || '',
+                        // Best-effort Google Calendar deep link from the event UID.
+                        google_calendar_link: buildGoogleCalLinkFromIcsUid(e.uid),
+                    })),
+                };
+                const metaPath = path.join(dst, path.basename(src).replace(/\.jsonl$/, '.meta.json'));
+                fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+                console.log(`[ListenService] meta sidecar → ${metaPath} (${events.length} event(s))`);
             }
         } catch (e) {
             console.warn('[ListenService] transcript copy failed:', e.message);

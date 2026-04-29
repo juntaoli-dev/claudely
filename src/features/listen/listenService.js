@@ -10,12 +10,66 @@ const sessionRepository = require('../common/repositories/session');
 const sttRepository = require('./stt/repositories');
 const internalBridge = require('../../bridge/internalBridge');
 
+const IDLE_PROMPT_MS = Number(process.env.CLAUDELY_IDLE_PROMPT_MS) || 60 * 60 * 1000; // 1 hour
+
 class ListenService {
     constructor() {
         this.active = null;          // { stop, store } from stt.start
         this.currentSessionId = null;
         this.isInitializing = false;
+        this.idleTimer = null;
+        this.sessionStartedAt = null;
         console.log('[ListenService] Service instance created.');
+    }
+
+    _scheduleIdlePrompt() {
+        if (this.idleTimer) clearTimeout(this.idleTimer);
+        this.idleTimer = setTimeout(() => this._showIdlePrompt(), IDLE_PROMPT_MS);
+    }
+
+    _cancelIdlePrompt() {
+        if (this.idleTimer) {
+            clearTimeout(this.idleTimer);
+            this.idleTimer = null;
+        }
+    }
+
+    _showIdlePrompt() {
+        const { Notification } = require('electron');
+        const elapsedMs = Date.now() - (this.sessionStartedAt || Date.now());
+        const hours = Math.floor(elapsedMs / 3_600_000);
+        const title = `Claudely has been recording for ${hours}h`;
+        const body = `Are you still in the meeting? If not, consider pausing the transcribing.`;
+        try {
+            const n = new Notification({
+                title,
+                body,
+                actions: [{ type: 'button', text: 'Pause' }, { type: 'button', text: 'Keep recording' }],
+                closeButtonText: 'Dismiss',
+            });
+            n.on('action', (event, index) => {
+                if (index === 0) {
+                    console.log('[ListenService] idle prompt → user paused');
+                    this.closeSession().catch(() => {});
+                } else {
+                    console.log('[ListenService] idle prompt → keep recording');
+                    this._scheduleIdlePrompt();
+                }
+            });
+            n.on('click', () => {
+                // No specific action button → re-arm so user gets reminded again later.
+                this._scheduleIdlePrompt();
+            });
+            n.on('close', () => {
+                // Dismissed without action → also re-arm.
+                this._scheduleIdlePrompt();
+            });
+            n.show();
+        } catch (e) {
+            console.warn('[ListenService] could not show idle notification:', e.message);
+            // If notifications fail, at least re-arm so we keep checking.
+            this._scheduleIdlePrompt();
+        }
     }
 
     sendToRenderer(channel, data) {
@@ -121,6 +175,8 @@ class ListenService {
                 },
             });
             this.sendToRenderer('update-status', 'Connected');
+            this.sessionStartedAt = Date.now();
+            this._scheduleIdlePrompt();
         } finally {
             this.isInitializing = false;
             this.sendToRenderer('change-listen-capture-state', { status: 'start' });
@@ -132,6 +188,8 @@ class ListenService {
     }
 
     async closeSession() {
+        this._cancelIdlePrompt();
+        this.sessionStartedAt = null;
         this.sendToRenderer('change-listen-capture-state', { status: 'stop' });
         const finishedStore = this.active?.store || null;
         try {

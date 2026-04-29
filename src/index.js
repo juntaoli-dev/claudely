@@ -238,6 +238,12 @@ app.whenReady().then(async () => {
             }, 1500);
         }
 
+        // Warm calendar cache in the background so manual asks never wait
+        // on the AppleScript Calendar.app round-trip.
+        setTimeout(() => {
+            try { require('./features/calendar/calendarContext').startWarming(); } catch (_) {}
+        }, 3000);
+
         // Hold-to-move via global keyboard hook. Needs Accessibility TCC.
         try {
             const keyhold = require('./features/shortcuts/keyholdManager');
@@ -305,6 +311,9 @@ app.whenReady().then(async () => {
         }
 
         if (process.env.CLAUDELY_DEBUG_ASK) {
+            // Wait long enough for calendar warm-up (default 100 s) so the
+            // smoke test reflects the cached-warm state of the app.
+            const delay = Number(process.env.CLAUDELY_DEBUG_ASK_DELAY_MS) || 100000;
             setTimeout(async () => {
                 try {
                     console.log('[DEBUG_ASK] triggering manualFire via FireDispatcher');
@@ -328,7 +337,7 @@ app.whenReady().then(async () => {
                     console.error('[DEBUG_ASK] ERR', e);
                     app.exit(1);
                 }
-            }, 2000);
+            }, delay);
         }
 
     } catch (err) {

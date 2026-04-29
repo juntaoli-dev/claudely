@@ -32,12 +32,6 @@ const nativeBinaries = [
         dst: path.join(__dirname, 'src/ui/assets/bin/classifier'),
         buildHint: 'npm run build:native',
     },
-    {
-        name: 'calendar-now',
-        src: path.join(__dirname, 'native/calendar-now/.build/release/calendar-now'),
-        dst: path.join(__dirname, 'src/ui/assets/bin/calendar-now'),
-        buildHint: 'npm run build:native',
-    },
 ];
 
 function copyNativeBinaries({ strict = false } = {}) {

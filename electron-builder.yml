@@ -36,7 +36,6 @@ asarUnpack:
     - "src/ui/assets/SystemAudioDump"
     - "src/ui/assets/bin/audio-capture"
     - "src/ui/assets/bin/classifier"
-    - "src/ui/assets/bin/calendar-now"
     - "**/node_modules/sharp/**/*"
     - "**/node_modules/@img/**/*"
     - "**/node_modules/uiohook-napi/**/*"

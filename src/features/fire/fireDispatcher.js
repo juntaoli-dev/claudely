@@ -80,6 +80,15 @@ class FireDispatcher {
             try { transcriptTail = this.store?.tail({ now: line.ts || Date.now(), seconds: 30 }) || ''; }
             catch (_) { transcriptTail = ''; }
         }
+
+        // Prepend meeting context (calendar event title, attendees, agenda)
+        // so Claude knows which meeting we're in without the user repeating it.
+        try {
+            const { getMeetingContext, formatForPrompt } = require('../calendar/calendarContext');
+            const events = await getMeetingContext();
+            const ctx = formatForPrompt(events);
+            if (ctx) transcriptTail = `${ctx}\n\n${transcriptTail || ''}`.trim();
+        } catch (_) { /* calendar is optional context */ }
         try {
             await this.claude.ask({
                 question,

@@ -16,7 +16,7 @@
         "postinstall": "electron-builder install-app-deps",
         "build:renderer": "node build.js",
         "build:web": "cd web && npm run build && cd ..",
-        "build:native": "cd native/audio-capture && swiftc -parse-as-library -O -target arm64-apple-macosx14.0 -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist Sources/audio-capture/main.swift -o .build/release/audio-capture && cd ../classifier && mkdir -p .build/release && swiftc -parse-as-library -O -target arm64-apple-macosx26.0 Sources/classifier/main.swift -o .build/release/classifier",
+        "build:native": "cd native/audio-capture && swiftc -parse-as-library -O -target arm64-apple-macosx14.0 -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist Sources/audio-capture/main.swift -o .build/release/audio-capture && cd ../classifier && mkdir -p .build/release && swiftc -parse-as-library -O -target arm64-apple-macosx26.0 Sources/classifier/main.swift -o .build/release/classifier && cd ../calendar-now && mkdir -p .build/release && swiftc -parse-as-library -O -target arm64-apple-macosx14.0 Sources/calendar-now/main.swift -o .build/release/calendar-now",
         "build:all": "npm run build:native && npm run build:renderer && npm run build:web",
         "watch:renderer": "node build.js --watch",
         "test": "vitest run",

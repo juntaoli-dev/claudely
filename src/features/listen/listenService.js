@@ -216,11 +216,12 @@ class ListenService {
         this.active = null;
 
         // Copy this session's transcript .jsonl + a meta sidecar (calendar
-        // event(s) that overlapped the recording) into the sync folder so the
-        // uploaded transcript carries full meeting context.
+        // event(s) that overlapped the recording) + Q&A history + screenshots
+        // into the sync folder so each upload carries full meeting context.
         try {
             const path = require('path');
             const fs = require('fs');
+            const os = require('os');
             const config = require('../common/config/config');
             const dst = config.get('transcriptUploadDir');
             const src = finishedStore?.getPersistPath?.();
@@ -229,6 +230,8 @@ class ListenService {
                 const targetTranscript = path.join(dst, path.basename(src));
                 fs.copyFileSync(src, targetTranscript);
                 console.log(`[ListenService] transcript copied → ${targetTranscript}`);
+
+                const baseName = path.basename(src).replace(/\.jsonl$/, '');
 
                 // Build sidecar with calendar events that overlapped the window.
                 let events = [];
@@ -240,8 +243,67 @@ class ListenService {
                         console.warn('[ListenService] calendar lookup for sidecar failed:', e.message);
                     }
                 }
+
+                // Q&A history that happened during the recording. Manual asks
+                // and auto-fires both write to ai_messages keyed by sent_at.
+                let qa = [];
+                if (recordedFrom) {
+                    try {
+                        const askRepo = require('./../ask/repositories');
+                        const fromSec = Math.floor(recordedFrom.getTime() / 1000);
+                        // +60s slop catches replies that streamed past stop click.
+                        const toSec = Math.floor((recordedTo.getTime() + 60_000) / 1000);
+                        qa = askRepo.getAiMessagesBetween(fromSec, toSec).map((m) => ({
+                            ts: m.sent_at ? new Date(m.sent_at * 1000).toISOString() : null,
+                            role: m.role,
+                            content: m.content,
+                            model: m.model || null,
+                            session_id: m.session_id,
+                        }));
+                    } catch (e) {
+                        console.warn('[ListenService] Q&A lookup for sidecar failed:', e.message);
+                    }
+                }
+
+                // Screenshots taken during fires live in os.tmpdir()/claudely/
+                // as screen-<ms>.png. Copy any whose mtime falls in the window
+                // into <base>.screenshots/ next to the transcript.
+                const screenshotsCopied = [];
+                if (recordedFrom) {
+                    try {
+                        const tmpDir = path.join(os.tmpdir(), 'claudely');
+                        if (fs.existsSync(tmpDir)) {
+                            const fromMs = recordedFrom.getTime();
+                            const toMs = recordedTo.getTime() + 60_000; // slop for trailing fires
+                            const shotsDir = path.join(dst, `${baseName}.screenshots`);
+                            for (const name of fs.readdirSync(tmpDir)) {
+                                if (!/^screen-\d+\.png$/.test(name)) continue;
+                                const full = path.join(tmpDir, name);
+                                let stat;
+                                try { stat = fs.statSync(full); } catch (_) { continue; }
+                                const t = stat.mtimeMs;
+                                if (t < fromMs || t > toMs) continue;
+                                if (!screenshotsCopied.length) fs.mkdirSync(shotsDir, { recursive: true });
+                                const target = path.join(shotsDir, name);
+                                try {
+                                    fs.copyFileSync(full, target);
+                                    screenshotsCopied.push({
+                                        file: path.relative(dst, target),
+                                        captured_at: new Date(t).toISOString(),
+                                        bytes: stat.size,
+                                    });
+                                } catch (e) {
+                                    console.warn('[ListenService] screenshot copy skip:', name, e.message);
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[ListenService] screenshot scan failed:', e.message);
+                    }
+                }
+
                 const meta = {
-                    schema: 1,
+                    schema: 2,
                     transcript_file: path.basename(src),
                     recorded_from: recordedFrom ? recordedFrom.toISOString() : null,
                     recorded_to: recordedTo.toISOString(),
@@ -260,10 +322,12 @@ class ListenService {
                         // Best-effort Google Calendar deep link from the event UID.
                         google_calendar_link: buildGoogleCalLinkFromIcsUid(e.uid),
                     })),
+                    qa,
+                    screenshots: screenshotsCopied,
                 };
-                const metaPath = path.join(dst, path.basename(src).replace(/\.jsonl$/, '.meta.json'));
+                const metaPath = path.join(dst, `${baseName}.meta.json`);
                 fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
-                console.log(`[ListenService] meta sidecar → ${metaPath} (${events.length} event(s))`);
+                console.log(`[ListenService] meta sidecar → ${metaPath} (${events.length} event(s), ${qa.length} qa msg, ${screenshotsCopied.length} shot(s))`);
             }
         } catch (e) {
             console.warn('[ListenService] transcript copy failed:', e.message);

@@ -12,7 +12,10 @@ const askRepositoryAdapter = {
     },
     getAllAiMessagesBySessionId: (sessionId) => {
         return getBaseRepository().getAllAiMessagesBySessionId(sessionId);
-    }
+    },
+    getAiMessagesBetween: (fromSec, toSec) => {
+        return getBaseRepository().getAiMessagesBetween(fromSec, toSec);
+    },
 };
 
 module.exports = askRepositoryAdapter;

@@ -22,7 +22,16 @@ function getAllAiMessagesBySessionId(sessionId) {
     return db.prepare(query).all(sessionId);
 }
 
+// Used by listenService to bundle Q&A that happened during a recording window
+// into the transcript upload. sent_at is unix seconds.
+function getAiMessagesBetween(fromSec, toSec) {
+    const db = sqliteClient.getDb();
+    const query = "SELECT id, session_id, sent_at, role, content, model FROM ai_messages WHERE sent_at >= ? AND sent_at <= ? ORDER BY sent_at ASC";
+    return db.prepare(query).all(fromSec, toSec);
+}
+
 module.exports = {
     addAiMessage,
-    getAllAiMessagesBySessionId
-}; 
+    getAllAiMessagesBySessionId,
+    getAiMessagesBetween,
+};

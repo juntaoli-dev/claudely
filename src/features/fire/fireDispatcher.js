@@ -93,12 +93,32 @@ class FireDispatcher {
                 if (ctx) transcriptTail = `${ctx}\n\n${transcriptTail || ''}`.trim();
             } catch (_) { /* calendar is optional context */ }
         }
+        // Persist the question + assistant reply to ai_messages so the
+        // listenService close-time sidecar can bundle every Q&A that happened
+        // during a recording, not just the ones routed through askService.
+        // sendMessage. Manual asks are persisted by askService itself so we
+        // skip them here to avoid duplicate rows. Wrapped in try/catch so a DB
+        // failure never breaks fire.
+        let askSessionId = null;
+        try {
+            if (!process.env.VITEST && !manual) {
+                const sessionRepository = require('../common/repositories/session');
+                askSessionId = await sessionRepository.getOrCreateActive('ask');
+                const askRepository = require('../ask/repositories');
+                await askRepository.addAiMessage({ sessionId: askSessionId, role: 'user', content: question });
+            }
+        } catch (_) { /* persistence best-effort */ }
+
+        let assistantText = '';
         try {
             await this.claude.ask({
                 question,
                 transcriptTail,
                 imagePath,
-                onDelta: (text) => this.onState({ type: 'delta', text }),
+                onDelta: (text) => {
+                    assistantText += text;
+                    this.onState({ type: 'delta', text });
+                },
                 onEvent: (e) => {
                     // Forward structured progress events so the renderer can
                     // show tool-call activity separately from answer text.
@@ -107,6 +127,12 @@ class FireDispatcher {
                     else if (e.kind === 'thinking') this.onState({ type: 'thinking-text', text: e.text });
                 },
             });
+            try {
+                if (askSessionId && assistantText) {
+                    const askRepository = require('../ask/repositories');
+                    await askRepository.addAiMessage({ sessionId: askSessionId, role: 'assistant', content: assistantText });
+                }
+            } catch (_) { /* persistence best-effort */ }
             this.onState({ type: 'done' });
         } catch (e) {
             this.onState({ type: 'error', error: 'claude: ' + e.message });

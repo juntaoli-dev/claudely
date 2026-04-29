@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.juntaoli.claudely.calendar-now</string>
+    <key>CFBundleName</key>
+    <string>calendar-now</string>
+    <key>CFBundleExecutable</key>
+    <string>calendar-now</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Claudely reads your calendar so it knows the current meeting context (title, attendees, agenda) when answering questions.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Claudely reads your calendar so it knows the current meeting context (title, attendees, agenda) when answering questions.</string>
+</dict>
+</plist>

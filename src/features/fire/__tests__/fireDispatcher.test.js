@@ -12,10 +12,15 @@ describe('FireDispatcher', () => {
         ...overrides,
     });
 
+    const flush = async () => {
+        for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r));
+    };
+
     it('fires when classifier returns addressed and auto-answer ON', async () => {
         const deps = makeDeps();
         const d = new FireDispatcher(deps);
         await d.maybeFire({ text: 'does our auth use SSO?', speaker: 'them-0', ts: Date.now() });
+        await flush();
         expect(deps.claude.ask).toHaveBeenCalledOnce();
     });
 
@@ -30,6 +35,7 @@ describe('FireDispatcher', () => {
         const deps = makeDeps({ config: { get: (k) => (k === 'autoAnswer' ? false : ['hey claude']) } });
         const d = new FireDispatcher(deps);
         await d.maybeFire({ text: 'hey claude what time is it', speaker: 'me', ts: Date.now() });
+        await flush();
         expect(deps.claude.ask).toHaveBeenCalledOnce();
         expect(deps.claude.ask.mock.calls[0][0].question).toBe('what time is it');
     });
@@ -41,13 +47,12 @@ describe('FireDispatcher', () => {
         });
         const d = new FireDispatcher(deps);
         d.maybeFire({ text: 'q1?', speaker: 'them', ts: 1 });
-        // Wait a tick so the first _fire is in-flight.
-        await new Promise((r) => setImmediate(r));
+        await flush();
         d.maybeFire({ text: 'q2?', speaker: 'them', ts: 2 });
         d.maybeFire({ text: 'q3?', speaker: 'them', ts: 3 });
         d.maybeFire({ text: 'q4?', speaker: 'them', ts: 4 });
         d.maybeFire({ text: 'q5?', speaker: 'them', ts: 5 });
-        await new Promise((r) => setImmediate(r));
+        await flush();
         expect(d.queueSize()).toBe(3);
         resolveFirst();
     });

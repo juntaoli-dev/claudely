@@ -56,7 +56,7 @@ class ClaudeSession {
     return this._query;
   }
 
-  async ask({ question, transcriptTail, imagePath, onDelta }) {
+  async ask({ question, transcriptTail, imagePath, onDelta, onEvent }) {
     if (process.env.ANTHROPIC_DRY_RUN === '1') {
       const payload = JSON.stringify({ question, transcriptTail, imagePath });
       console.log('[DRY-RUN]', payload);
@@ -87,13 +87,76 @@ class ClaudeSession {
     const iterator = queryFn({ prompt, options });
 
     for await (const msg of iterator) {
-      if (msg.type === 'assistant') {
+      // Surface every block — tool_use, tool_result, text — as either a
+      // structured event (for callers that want to render them custom) and
+      // as a textual delta with an emoji marker so the existing answer pane
+      // shows progress live, like Claude Code's terminal.
+      if (msg.type === 'assistant' && msg.message?.content) {
         for (const block of msg.message.content) {
-          if (block.type === 'text' && block.text) onDelta(block.text);
+          if (block.type === 'text' && block.text) {
+            onDelta?.(block.text);
+            onEvent?.({ kind: 'text', text: block.text });
+          } else if (block.type === 'tool_use') {
+            const summary = summarizeToolUse(block);
+            onDelta?.(`\n\n🔧 ${summary}\n`);
+            onEvent?.({ kind: 'tool_use', name: block.name, input: block.input });
+          } else if (block.type === 'thinking' && block.thinking) {
+            onEvent?.({ kind: 'thinking', text: block.thinking });
+          }
         }
+      } else if (msg.type === 'user' && msg.message?.content) {
+        // Tool results come back as user-role content from the SDK harness.
+        for (const block of msg.message.content) {
+          if (block.type === 'tool_result') {
+            const summary = summarizeToolResult(block);
+            if (summary) onDelta?.(`✓ ${summary}\n`);
+            onEvent?.({ kind: 'tool_result', isError: !!block.is_error });
+          }
+        }
+      } else if (msg.type === 'result') {
+        onEvent?.({ kind: 'result', subtype: msg.subtype });
       }
     }
   }
+}
+
+function summarizeToolUse(block) {
+  const name = block.name || 'Tool';
+  const input = block.input || {};
+  switch (name) {
+    case 'Read': return `Read ${input.file_path || ''}`;
+    case 'Grep': {
+      const pat = input.pattern || '';
+      const where = input.path ? ` in ${input.path}` : '';
+      return `Grep ${JSON.stringify(pat)}${where}`;
+    }
+    case 'Glob': return `Glob ${input.pattern || ''}`;
+    case 'Bash': {
+      const cmd = (input.command || '').slice(0, 120);
+      return `Bash \`${cmd}${(input.command || '').length > 120 ? '…' : ''}\``;
+    }
+    case 'WebFetch': return `WebFetch ${input.url || ''}`;
+    default: {
+      try { return `${name} ${JSON.stringify(input).slice(0, 120)}`; }
+      catch { return name; }
+    }
+  }
+}
+
+function summarizeToolResult(block) {
+  if (!block.content) return null;
+  if (typeof block.content === 'string') {
+    const head = block.content.split('\n')[0] || '';
+    return head.length > 100 ? head.slice(0, 100) + '…' : head;
+  }
+  if (Array.isArray(block.content)) {
+    const text = block.content.find((c) => c.type === 'text');
+    if (text?.text) {
+      const head = text.text.split('\n')[0] || '';
+      return head.length > 100 ? head.slice(0, 100) + '…' : head;
+    }
+  }
+  return null;
 }
 
 module.exports = { ClaudeSession };

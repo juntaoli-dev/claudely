@@ -5,6 +5,7 @@
 // so back-to-back fires don't spawn the binary repeatedly.
 
 const { spawn } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 const TTL_MS = 60 * 1000;
@@ -17,8 +18,10 @@ function binaryPath() {
 
 function fetchEvents() {
     return new Promise((resolve) => {
+        const bin = binaryPath();
+        if (!fs.existsSync(bin)) { resolve([]); return; }
         try {
-            const p = spawn(binaryPath(), [], { stdio: ['ignore', 'pipe', 'pipe'] });
+            const p = spawn(bin, [], { stdio: ['ignore', 'pipe', 'pipe'] });
             let out = '';
             p.stdout.on('data', (d) => { out += d.toString(); });
             p.stderr.on('data', () => {}); // swallow; helper logs ERR: calendar-access-denied etc.

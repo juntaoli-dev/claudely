@@ -16,24 +16,92 @@
 
 const fs = require('fs');
 const path = require('path');
-const { marked } = require('marked');
+const { marked, Renderer } = require('marked');
 
 function deriveTitle(markdown, fallback) {
     const m = (markdown || '').match(/^\s*#\s+(.+?)\s*$/m);
     return m ? m[1].trim() : fallback;
 }
 
-// Wrap the rendered <body> fragment in a tiny HTML shell. Drive's converter
-// preserves headings, lists, blockquotes, and tables faithfully, but it
-// expects a full document; passing only fragments occasionally drops the
-// first heading.
+// Color palette matching the user's reference visa-guide doc:
+//   H1 banner      — deep orange    (#9a3412 / amber-800)
+//   H2 sections    — orange         (#b45309 / amber-700) with amber underline
+//   H3 subsections — deep blue      (#1e40af / blue-800)
+//   Tables         — amber-50 header bg + warm gray borders
+//   Blockquotes    — amber pull-quote with light fill
+//   Body           — Arial 11pt, gray-900 text
+// Drive's HTML→Google Doc conversion respects color/font/border/background
+// inline styles on h1/h2/h3, th/td, blockquote, and ul/ol, so we apply those
+// directly via a marked Renderer override.
+const STYLED_RENDERER = new Renderer();
+
+const HEADING_STYLES = {
+    1: 'font-family:Arial,sans-serif;font-size:24pt;font-weight:700;color:#9a3412;margin:6px 0 8px 0;letter-spacing:0.2px;',
+    2: 'font-family:Arial,sans-serif;font-size:16pt;font-weight:700;color:#b45309;border-bottom:2px solid #f59e0b;padding-bottom:4px;margin:22px 0 10px 0;text-transform:none;',
+    3: 'font-family:Arial,sans-serif;font-size:13pt;font-weight:700;color:#1e40af;margin:14px 0 4px 0;',
+    4: 'font-family:Arial,sans-serif;font-size:11pt;font-weight:700;color:#374151;margin:10px 0 4px 0;',
+    5: 'font-family:Arial,sans-serif;font-size:10pt;font-weight:700;color:#6b7280;margin:8px 0 4px 0;',
+    6: 'font-family:Arial,sans-serif;font-size:10pt;font-weight:700;color:#6b7280;margin:8px 0 4px 0;',
+};
+
+STYLED_RENDERER.heading = function (text, level, raw, slugger) {
+    const style = HEADING_STYLES[level] || HEADING_STYLES[3];
+    return `<h${level} style="${style}">${text}</h${level}>\n`;
+};
+
+STYLED_RENDERER.blockquote = function (quote) {
+    return `<blockquote style="border-left:4px solid #f59e0b;background-color:#fffbeb;padding:10px 14px;color:#374151;margin:12px 0;font-family:Arial,sans-serif;font-size:11pt;">${quote}</blockquote>\n`;
+};
+
+STYLED_RENDERER.tablecell = function (content, flags) {
+    const align = flags.align ? `text-align:${flags.align};` : '';
+    if (flags.header) {
+        return `<th style="border:1px solid #d6d3d1;background-color:#fef3c7;color:#9a3412;font-weight:700;padding:6px 10px;text-align:${flags.align || 'left'};font-family:Arial,sans-serif;font-size:10pt;">${content}</th>\n`;
+    }
+    return `<td style="border:1px solid #d6d3d1;padding:6px 10px;vertical-align:top;${align}font-family:Arial,sans-serif;font-size:10pt;">${content}</td>\n`;
+};
+
+STYLED_RENDERER.table = function (header, body) {
+    const bodyOut = body ? `<tbody>${body}</tbody>` : '';
+    return `<table style="border-collapse:collapse;margin:10px 0;font-family:Arial,sans-serif;">\n<thead>${header}</thead>\n${bodyOut}</table>\n`;
+};
+
+STYLED_RENDERER.paragraph = function (text) {
+    return `<p style="font-family:Arial,sans-serif;font-size:11pt;color:#111827;line-height:1.45;margin:6px 0;">${text}</p>\n`;
+};
+
+STYLED_RENDERER.list = function (body, ordered, start) {
+    const tag = ordered ? 'ol' : 'ul';
+    const startAttr = ordered && start !== 1 ? ` start="${start}"` : '';
+    return `<${tag}${startAttr} style="font-family:Arial,sans-serif;font-size:11pt;color:#111827;margin:6px 0 6px 24px;line-height:1.45;">${body}</${tag}>\n`;
+};
+
+STYLED_RENDERER.listitem = function (text) {
+    return `<li style="margin:3px 0;">${text}</li>\n`;
+};
+
+STYLED_RENDERER.strong = function (text) {
+    return `<strong style="color:#111827;">${text}</strong>`;
+};
+
+STYLED_RENDERER.codespan = function (code) {
+    return `<code style="font-family:'Roboto Mono',Menlo,monospace;background-color:#f3f4f6;color:#1f2937;padding:1px 4px;border-radius:3px;font-size:10pt;">${code}</code>`;
+};
+
+STYLED_RENDERER.hr = function () {
+    return `<hr style="border:0;border-top:1px solid #e5e7eb;margin:18px 0;">\n`;
+};
+
+// Render the body with the styled renderer, then wrap in a minimal HTML
+// document so Drive's converter has a full document to work with.
 function renderHtml(markdown, title) {
-    const body = marked.parse(markdown, { gfm: true, breaks: false });
+    const body = marked.parse(markdown, { gfm: true, breaks: false, renderer: STYLED_RENDERER });
     return [
         '<!doctype html>',
         '<html><head><meta charset="utf-8"><title>',
         escapeHtml(title),
-        '</title></head><body>',
+        '</title></head>',
+        '<body style="font-family:Arial,sans-serif;font-size:11pt;color:#111827;line-height:1.45;">',
         body,
         '</body></html>',
     ].join('');

@@ -117,6 +117,28 @@ function escapeHtml(s) {
     }[c]));
 }
 
+// Pull a YYYY-MM bucket from either the meta sidecar's recorded_from, the
+// summary md filename pattern, or fall back to current month. Used to put
+// the resulting Doc in <Meeting Summary>/<YYYY-MM>/ on Drive so the folder
+// stays browsable as transcripts pile up.
+function deriveMonthBucket(markdownPath) {
+    try {
+        const dir = path.dirname(markdownPath);
+        const base = path.basename(markdownPath).replace(/\.summary\.md$/, '').replace(/\.md$/, '');
+        const metaPath = path.join(dir, `${base}.meta.json`);
+        if (fs.existsSync(metaPath)) {
+            const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+            const ts = meta.recorded_from || meta.recorded_to;
+            const m = ts && String(ts).match(/^(\d{4})-(\d{2})/);
+            if (m) return `${m[1]}-${m[2]}`;
+        }
+        const m = base.match(/^(\d{4})-(\d{2})/);
+        if (m) return `${m[1]}-${m[2]}`;
+    } catch (_) { /* fall through */ }
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
 async function uploadSummary({ markdownPath, fallbackTitle, webhookUrl, secret, fetchImpl }) {
     if (!webhookUrl || !secret) {
         return { skipped: true, reason: 'missing summaryWebhookUrl or summarySecret in config' };
@@ -127,13 +149,14 @@ async function uploadSummary({ markdownPath, fallbackTitle, webhookUrl, secret, 
     const markdown = fs.readFileSync(markdownPath, 'utf8');
     const title = deriveTitle(markdown, fallbackTitle || path.basename(markdownPath, '.md'));
     const html = renderHtml(markdown, title);
+    const monthBucket = deriveMonthBucket(markdownPath);
 
     const fetchFn = fetchImpl || globalThis.fetch;
     if (!fetchFn) throw new Error('fetch not available; need Node 18+');
     const res = await fetchFn(webhookUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ secret, title, html }),
+        body: JSON.stringify({ secret, title, html, monthBucket }),
         redirect: 'follow',
     });
 
@@ -148,7 +171,7 @@ async function uploadSummary({ markdownPath, fallbackTitle, webhookUrl, secret, 
         e.payload = payload;
         throw e;
     }
-    return { skipped: false, id: payload.id, url: payload.url, title };
+    return { skipped: false, id: payload.id, url: payload.url, title, monthBucket };
 }
 
-module.exports = { uploadSummary, renderHtml, deriveTitle };
+module.exports = { uploadSummary, renderHtml, deriveTitle, deriveMonthBucket };

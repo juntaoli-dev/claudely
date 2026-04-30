@@ -185,7 +185,30 @@ class ListenService {
                     if (s.type === 'listening') this.sendToRenderer('update-status', 'Listening…');
                     else if (s.type === 'error') this.sendToRenderer('update-status', `ERR: ${s.error}`);
                     else if (s.type === 'stderr') console.warn('[ListenService][stderr]', s.text.trim());
-                    else if (s.type === 'capture-exit') console.warn('[ListenService] capture exited', s.code);
+                    else if (s.type === 'capture-exit') {
+                        // Swift audio-capture helper died (codesign hiccup, TCC
+                        // race, kernel oom, …). Without this handler the UI
+                        // would keep showing "Listening" forever while no
+                        // transcripts arrived. Tear down this.active, then
+                        // attempt one auto-restart so the user doesn't have to
+                        // notice + click Stop/Listen.
+                        const code = s.code;
+                        console.warn(`[ListenService] capture exited code=${code} — tearing down + auto-restarting`);
+                        const wasActive = this.active;
+                        this.active = null;
+                        try { wasActive?.stop?.(); } catch (_) {}
+                        this.sendToRenderer('update-status', `capture exited (${code}) — restarting`);
+                        // Single retry. If it re-dies, leave it stopped and
+                        // surface the error so the user can act.
+                        setTimeout(() => {
+                            if (this.active) return; // user already restarted
+                            this.start().catch((e) => {
+                                console.warn('[ListenService] auto-restart failed:', e.message);
+                                this.sendToRenderer('update-status', `restart failed: ${e.message}`);
+                                this.sendToRenderer('session-state-changed', { isActive: false });
+                            });
+                        }, 1500);
+                    }
                 },
             });
             this.sendToRenderer('update-status', 'Connected');

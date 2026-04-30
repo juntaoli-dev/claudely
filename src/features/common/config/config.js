@@ -55,14 +55,12 @@ class Config {
             // set or upload silently skips.
             summaryWebhookUrl: '',
             summarySecret: '',
-            // Hold-to-move for Shift+Arrow uses uiohook-napi, which installs a
-            // global keyboard hook that taps EVERY system keystroke + mouse
-            // event. On macOS the resulting CGEventTap traffic noticeably
-            // slows the entire desktop (clicks/typing lag) for some users.
-            // Default OFF; set true if you actively use the smooth-hold move.
-            // Single-press Shift+Arrow nudges still work via globalShortcut
-            // when this is off.
-            holdToMove: false,
+            // Hold-to-move for Shift+Arrow. Uses Electron globalShortcut for
+            // press detection (zero cost at idle) and lazily starts
+            // uiohook-napi only DURING an active hold, so the system-wide
+            // CGEventTap is off 99% of the time. Safe default-on. Flip to
+            // false to disable Shift+Arrow entirely.
+            holdToMove: true,
         };
         
         this.config = { ...this.defaults };

@@ -244,9 +244,10 @@ app.whenReady().then(async () => {
             try { require('./features/calendar/calendarContext').startWarming(); } catch (_) {}
         }, 3000);
 
-        // Hold-to-move via global keyboard hook. Off by default because
-        // uiohook-napi's CGEventTap traffic visibly slows the whole desktop.
-        // Toggle on by setting holdToMove: true in ~/.claudely/config.json.
+        // Hold-to-move via Shift+Arrow. globalShortcut handles press detection
+        // (zero idle cost), uiohook-napi only spins up DURING active holds to
+        // catch keyup. Default on; set holdToMove:false in
+        // ~/.claudely/config.json to disable Shift+Arrow entirely.
         if (_config.get('holdToMove')) {
             try {
                 const keyhold = require('./features/shortcuts/keyholdManager');
@@ -256,7 +257,7 @@ app.whenReady().then(async () => {
                 console.warn('[KeyHold] init failed:', e.message);
             }
         } else {
-            console.log('[KeyHold] disabled (config.holdToMove=false). Single-tap Shift+Arrow still works via globalShortcut.');
+            console.log('[KeyHold] disabled (config.holdToMove=false).');
         }
 
         if (process.env.CLAUDELY_DEBUG_STT) {

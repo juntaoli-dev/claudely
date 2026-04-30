@@ -19,8 +19,11 @@
 //      https://script.google.com/macros/s/AKfy.../exec) and paste it into
 //      ~/.claudely/config.json under "summaryWebhookUrl".
 //
-// After that every Claudely listen session ends with a Google Doc landing in
-// "<PARENT_FOLDER_NAME>/<TARGET_FOLDER_NAME>" automatically.
+// Each summary lands at:
+//   <PARENT_FOLDER_NAME>/<TARGET_FOLDER_NAME>/<YYYY-MM>/<doc>
+// where <YYYY-MM> is the bucket Claudely passes in the POST body. The script
+// auto-creates each month subfolder on demand. If no monthBucket is sent, the
+// doc lands directly in <TARGET_FOLDER_NAME> as a fallback.
 
 const SHARED_SECRET = 'CHANGE_ME_TO_A_LONG_RANDOM_STRING';
 const PARENT_FOLDER_NAME = 'Claudely Transcripts';
@@ -39,7 +42,7 @@ function doPost(e) {
             return jsonOut({ ok: false, error: 'missing title or html' });
         }
 
-        const folder = ensureTargetFolder();
+        const folder = ensureTargetFolder(body.monthBucket);
         const blob = Utilities.newBlob(body.html, 'text/html', body.title + '.html');
         // Drive Advanced Service v2: convert: true triggers server-side HTML
         // → Google Doc conversion. Resulting file's mimeType is
@@ -71,17 +74,52 @@ function doGet() {
     return jsonOut({ ok: true, hint: 'POST {secret, title, html} to upload' });
 }
 
-function ensureTargetFolder() {
+// Resolve <PARENT_FOLDER_NAME>/<TARGET_FOLDER_NAME>[/<YYYY-MM>], creating any
+// missing pieces. Returns the deepest folder.
+function ensureTargetFolder(monthBucket) {
     const parents = DriveApp.getFoldersByName(PARENT_FOLDER_NAME);
+    let parent;
     if (!parents.hasNext()) {
-        // Auto-create the parent at Drive root if missing — first-run friendly.
-        const root = DriveApp.getRootFolder();
-        return root.createFolder(PARENT_FOLDER_NAME).createFolder(TARGET_FOLDER_NAME);
+        parent = DriveApp.getRootFolder().createFolder(PARENT_FOLDER_NAME);
+    } else {
+        parent = parents.next();
     }
-    const parent = parents.next();
     const subs = parent.getFoldersByName(TARGET_FOLDER_NAME);
-    if (subs.hasNext()) return subs.next();
-    return parent.createFolder(TARGET_FOLDER_NAME);
+    let summary = subs.hasNext() ? subs.next() : parent.createFolder(TARGET_FOLDER_NAME);
+    if (!monthBucket || !/^\d{4}-\d{2}$/.test(monthBucket)) return summary;
+    const monthSubs = summary.getFoldersByName(monthBucket);
+    if (monthSubs.hasNext()) return monthSubs.next();
+    return summary.createFolder(monthBucket);
+}
+
+// One-shot helper: walk every Google Doc currently sitting in
+// <Meeting Summary> root and move each into <YYYY-MM>/ derived from the
+// doc's createdDate. Run from the Apps Script editor: select reorganize
+// from the function dropdown and click Run. Idempotent — re-running does
+// nothing once everything's bucketed.
+function reorganize() {
+    const parents = DriveApp.getFoldersByName(PARENT_FOLDER_NAME);
+    if (!parents.hasNext()) { Logger.log('parent folder missing'); return; }
+    const subs = parents.next().getFoldersByName(TARGET_FOLDER_NAME);
+    if (!subs.hasNext()) { Logger.log('summary folder missing'); return; }
+    const summaryFolder = subs.next();
+    const docs = summaryFolder.getFilesByType(MimeType.GOOGLE_DOCS);
+    let moved = 0;
+    while (docs.hasNext()) {
+        const f = docs.next();
+        const d = f.getDateCreated();
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const bucket = yyyy + '-' + mm;
+        const monthSubs = summaryFolder.getFoldersByName(bucket);
+        const target = monthSubs.hasNext() ? monthSubs.next() : summaryFolder.createFolder(bucket);
+        // Drive v2 move: add to new folder, remove from old.
+        target.addFile(f);
+        summaryFolder.removeFile(f);
+        moved++;
+        Logger.log('moved %s → %s', f.getName(), bucket);
+    }
+    Logger.log('reorganize done: moved=%s', moved);
 }
 
 function jsonOut(obj) {

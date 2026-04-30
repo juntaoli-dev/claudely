@@ -244,13 +244,19 @@ app.whenReady().then(async () => {
             try { require('./features/calendar/calendarContext').startWarming(); } catch (_) {}
         }, 3000);
 
-        // Hold-to-move via global keyboard hook. Needs Accessibility TCC.
-        try {
-            const keyhold = require('./features/shortcuts/keyholdManager');
-            keyhold.start();
-            app.on('before-quit', () => { try { keyhold.stop(); } catch (_) {} });
-        } catch (e) {
-            console.warn('[KeyHold] init failed:', e.message);
+        // Hold-to-move via global keyboard hook. Off by default because
+        // uiohook-napi's CGEventTap traffic visibly slows the whole desktop.
+        // Toggle on by setting holdToMove: true in ~/.claudely/config.json.
+        if (_config.get('holdToMove')) {
+            try {
+                const keyhold = require('./features/shortcuts/keyholdManager');
+                keyhold.start();
+                app.on('before-quit', () => { try { keyhold.stop(); } catch (_) {} });
+            } catch (e) {
+                console.warn('[KeyHold] init failed:', e.message);
+            }
+        } else {
+            console.log('[KeyHold] disabled (config.holdToMove=false). Single-tap Shift+Arrow still works via globalShortcut.');
         }
 
         if (process.env.CLAUDELY_DEBUG_STT) {

@@ -48,6 +48,13 @@ class Config {
             // folder under ~/Library/CloudStorage/GoogleDrive-<email>/...
             // and Google Drive Desktop will upload it automatically.
             transcriptUploadDir: '',
+            // Apps Script Web App that converts the generated summary .md
+            // into a real Google Doc and drops it in the user's
+            // Claudely Transcripts/Meeting Summary folder. Setup steps live
+            // in scripts/apps-script/SummaryUploader.gs. Both keys must be
+            // set or upload silently skips.
+            summaryWebhookUrl: '',
+            summarySecret: '',
         };
         
         this.config = { ...this.defaults };

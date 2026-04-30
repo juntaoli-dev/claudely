@@ -331,7 +331,9 @@ class ListenService {
 
                 // Fire-and-forget Claude-generated summary. Runs in the
                 // background so closeSession() returns immediately; the .md
-                // lands next to the transcript when ready (typically 15-60s).
+                // lands next to the transcript when ready (typically 15-60s),
+                // and if Drive webhook is configured, also gets uploaded as a
+                // real Google Doc into the Meeting Summary folder.
                 // Disable with CLAUDELY_DISABLE_SUMMARY=1 for tests / debugging.
                 if (process.env.CLAUDELY_DISABLE_SUMMARY !== '1') {
                     const summaryPath = path.join(dst, `${baseName}.summary.md`);
@@ -349,6 +351,24 @@ class ListenService {
                             console.log(`[ListenService] summary written ${res.bytes}B in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
                         } catch (e) {
                             console.warn('[ListenService] summary failed:', e.message);
+                            return;
+                        }
+                        try {
+                            const { uploadSummary } = require('../summary/driveUploader');
+                            const cfg = require('../common/config/config');
+                            const result = await uploadSummary({
+                                markdownPath: summaryPath,
+                                fallbackTitle: baseName,
+                                webhookUrl: cfg.get('summaryWebhookUrl'),
+                                secret: cfg.get('summarySecret'),
+                            });
+                            if (result.skipped) {
+                                console.log(`[ListenService] summary upload skipped: ${result.reason}`);
+                            } else {
+                                console.log(`[ListenService] summary uploaded → ${result.url}`);
+                            }
+                        } catch (e) {
+                            console.warn('[ListenService] summary upload failed:', e.message);
                         }
                     })();
                 }

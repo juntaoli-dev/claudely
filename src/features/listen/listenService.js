@@ -328,6 +328,30 @@ class ListenService {
                 const metaPath = path.join(dst, `${baseName}.meta.json`);
                 fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
                 console.log(`[ListenService] meta sidecar → ${metaPath} (${events.length} event(s), ${qa.length} qa msg, ${screenshotsCopied.length} shot(s))`);
+
+                // Fire-and-forget Claude-generated summary. Runs in the
+                // background so closeSession() returns immediately; the .md
+                // lands next to the transcript when ready (typically 15-60s).
+                // Disable with CLAUDELY_DISABLE_SUMMARY=1 for tests / debugging.
+                if (process.env.CLAUDELY_DISABLE_SUMMARY !== '1') {
+                    const summaryPath = path.join(dst, `${baseName}.summary.md`);
+                    (async () => {
+                        try {
+                            const { Summarizer } = require('../summary/summarizer');
+                            const summarizer = new Summarizer();
+                            console.log(`[ListenService] summarizing → ${summaryPath}`);
+                            const t0 = Date.now();
+                            const res = await summarizer.summarize({
+                                transcriptPath: targetTranscript,
+                                metaPath,
+                                outPath: summaryPath,
+                            });
+                            console.log(`[ListenService] summary written ${res.bytes}B in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+                        } catch (e) {
+                            console.warn('[ListenService] summary failed:', e.message);
+                        }
+                    })();
+                }
             }
         } catch (e) {
             console.warn('[ListenService] transcript copy failed:', e.message);

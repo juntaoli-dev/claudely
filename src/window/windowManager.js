@@ -144,30 +144,47 @@ function setupWindowController(windowPool, layoutManager, movementManager) {
 
     internalBridge.on('window:moveStep', ({ direction, hold }) => {
         const header = windowPool.get('header');
-        if (header) {
-            // Hold-driven repeats arrive at ~30 Hz; use a smaller per-tick step
-            // so the cumulative speed is comfortable. Tap-driven (no hold) keeps
-            // the larger step for snappy single-press moves.
-            const step = hold ? 22 : 80;
-            const newHeaderPosition = layoutManager.calculateStepMovePosition(header, direction, step);
-            if (!newHeaderPosition) return;
-    
-            const futureHeaderBounds = { ...header.getBounds(), ...newHeaderPosition };
-            const visibleWindows = {};
-            const listenWin = windowPool.get('listen');
-            const askWin = windowPool.get('ask');
-            if (listenWin && !listenWin.isDestroyed() && listenWin.isVisible()) {
-                visibleWindows.listen = true;
-            }
-            if (askWin && !askWin.isDestroyed() && askWin.isVisible()) {
-                visibleWindows.ask = true;
-            }
+        if (!header || header.isDestroyed()) return;
 
-            const newChildLayout = layoutManager.calculateFeatureWindowLayout(visibleWindows, futureHeaderBounds);
-    
-            movementManager.animateWindowPosition(header, newHeaderPosition);
-            movementManager.animateLayout(newChildLayout);
+        // Tap-driven single move: animate (snappy easing). Hold-driven move:
+        // setBounds directly at every tick so we don't queue 140ms animations
+        // on top of each other every 16ms — that fight is what made the hold
+        // visibly stutter. Direct setBounds at the high tick rate looks
+        // smooth because AppKit handles the actual interpolation.
+        const step = hold ? 12 : 80;
+        const newHeaderPosition = layoutManager.calculateStepMovePosition(header, direction, step);
+        if (!newHeaderPosition) return;
+
+        const futureHeaderBounds = { ...header.getBounds(), ...newHeaderPosition };
+        const visibleWindows = {};
+        const listenWin = windowPool.get('listen');
+        const askWin = windowPool.get('ask');
+        if (listenWin && !listenWin.isDestroyed() && listenWin.isVisible()) {
+            visibleWindows.listen = true;
         }
+        if (askWin && !askWin.isDestroyed() && askWin.isVisible()) {
+            visibleWindows.ask = true;
+        }
+
+        const newChildLayout = layoutManager.calculateFeatureWindowLayout(visibleWindows, futureHeaderBounds);
+
+        if (hold) {
+            // Cancel any in-flight animations so they can't overwrite our
+            // direct setBounds with stale interpolated values.
+            try { movementManager.animationTimers?.forEach?.((t) => { try { clearImmediate(t); } catch (_) {} try { clearTimeout(t); } catch (_) {} }); } catch (_) {}
+            try { movementManager.animationTimers?.clear?.(); } catch (_) {}
+            movementManager.isAnimating = false;
+
+            header.setBounds(futureHeaderBounds);
+            for (const name of Object.keys(newChildLayout)) {
+                const win = windowPool.get(name);
+                if (win && !win.isDestroyed()) win.setBounds(newChildLayout[name]);
+            }
+            return;
+        }
+
+        movementManager.animateWindowPosition(header, newHeaderPosition);
+        movementManager.animateLayout(newChildLayout);
     });
 
     internalBridge.on('window:resizeHeaderWindow', ({ width, height }) => {

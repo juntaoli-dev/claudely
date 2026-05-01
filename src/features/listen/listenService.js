@@ -33,6 +33,14 @@ class ListenService {
         this.isInitializing = false;
         this.idleTimer = null;
         this.sessionStartedAt = null;
+        // Restart-attempt accounting. If the Swift audio-capture helper keeps
+        // dying (TCC denied, dead binary, kernel oom), we'd otherwise respawn
+        // it forever — every loop allocates a fresh child process + Deepgram
+        // WebSocket + TranscriptStore write stream + .jsonl file. After a
+        // night that's thousands of leaked allocations, multi-GB RSS, and an
+        // unkillable app. We give up after MAX in WINDOW_MS.
+        this._restartAttempts = [];   // ms timestamps
+        this._restartGiveUp = false;
         console.log('[ListenService] Service instance created.');
     }
 
@@ -153,6 +161,10 @@ class ListenService {
         if (this.active) return;
         if (this.isInitializing) return;
         this.isInitializing = true;
+        // Manual or initial start clears the give-up flag and the rolling
+        // attempt window so a fresh user-driven session gets a clean budget.
+        this._restartGiveUp = false;
+        this._restartAttempts = [];
         this.sendToRenderer('update-status', 'Starting capture…');
 
         try {
@@ -186,28 +198,47 @@ class ListenService {
                     else if (s.type === 'error') this.sendToRenderer('update-status', `ERR: ${s.error}`);
                     else if (s.type === 'stderr') console.warn('[ListenService][stderr]', s.text.trim());
                     else if (s.type === 'capture-exit') {
-                        // Swift audio-capture helper died (codesign hiccup, TCC
-                        // race, kernel oom, …). Without this handler the UI
-                        // would keep showing "Listening" forever while no
-                        // transcripts arrived. Tear down this.active, then
-                        // attempt one auto-restart so the user doesn't have to
-                        // notice + click Stop/Listen.
+                        // Swift audio-capture helper died (codesign hiccup,
+                        // TCC race, kernel oom, …). Tear down and try a
+                        // bounded number of restarts with backoff. After too
+                        // many failures in a window we give up — without this
+                        // a permanently-broken helper would respawn child
+                        // processes + Deepgram sockets + new .jsonl streams
+                        // forever, leaking RAM until the app is unkillable.
                         const code = s.code;
-                        console.warn(`[ListenService] capture exited code=${code} — tearing down + auto-restarting`);
                         const wasActive = this.active;
                         this.active = null;
                         try { wasActive?.stop?.(); } catch (_) {}
-                        this.sendToRenderer('update-status', `capture exited (${code}) — restarting`);
-                        // Single retry. If it re-dies, leave it stopped and
-                        // surface the error so the user can act.
+
+                        const MAX = 3;
+                        const WINDOW_MS = 60_000;
+                        const now = Date.now();
+                        this._restartAttempts = this._restartAttempts.filter((t) => now - t < WINDOW_MS);
+                        this._restartAttempts.push(now);
+
+                        if (this._restartAttempts.length > MAX) {
+                            this._restartGiveUp = true;
+                            console.warn(`[ListenService] capture exited code=${code}, ${this._restartAttempts.length} restarts in ${WINDOW_MS}ms — giving up`);
+                            this.sendToRenderer('update-status', `capture keeps dying (code ${code}); stopped retrying. Click Listen to try again.`);
+                            this.sendToRenderer('session-state-changed', { isActive: false });
+                            this.sendToRenderer('change-listen-capture-state', { status: 'stop' });
+                            return;
+                        }
+
+                        // Backoff: 1.5s, 5s, 15s.
+                        const delays = [1500, 5000, 15000];
+                        const delay = delays[Math.min(this._restartAttempts.length - 1, delays.length - 1)];
+                        console.warn(`[ListenService] capture exited code=${code} — restart #${this._restartAttempts.length} in ${delay}ms`);
+                        this.sendToRenderer('update-status', `capture exited (${code}) — restarting in ${(delay / 1000).toFixed(1)}s`);
                         setTimeout(() => {
-                            if (this.active) return; // user already restarted
+                            if (this.active) return;       // user already restarted
+                            if (this._restartGiveUp) return;
                             this.start().catch((e) => {
                                 console.warn('[ListenService] auto-restart failed:', e.message);
                                 this.sendToRenderer('update-status', `restart failed: ${e.message}`);
                                 this.sendToRenderer('session-state-changed', { isActive: false });
                             });
-                        }, 1500);
+                        }, delay);
                     }
                 },
             });

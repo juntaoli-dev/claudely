@@ -83,9 +83,11 @@ function stopUiohook() {
     hookStarted = false;
 }
 
-function startHold(direction, intervalMs = 35) {
-    // If we're already holding this direction, leave the existing repeat
-    // running so consecutive globalShortcut fires don't reset the cadence.
+function startHold(direction, intervalMs = 16) {
+    // 16ms ≈ 60Hz. The window moveStep handler does direct setBounds (no
+    // animation) for hold ticks, so a high cadence is what gives the smooth
+    // glide. The previous 35ms tick + queued animations was the source of
+    // the visible stutter.
     if (activeDirection === direction && holdTimer) return;
     stopHold();
     activeDirection = direction;

@@ -83,6 +83,14 @@ export class SttView extends LitElement {
         isVisible: { type: Boolean },
     };
 
+    // Cap how many transcript bubbles we keep in the DOM. Without this, an
+    // overnight Listen session grows the array unbounded → tens of thousands
+    // of DOM nodes → renderer hangs → IPC from main backs up → RAM blows up
+    // → app becomes unkillable. 300 keeps roughly the last 10–15 minutes of
+    // chatter visible in the panel; older lines still live in the .jsonl on
+    // disk so nothing is lost.
+    static MAX_MESSAGES = 300;
+
     constructor() {
         super();
         this.sttMessages = [];
@@ -166,8 +174,16 @@ export class SttView extends LitElement {
             }
         }
 
+        // Drop oldest finals once we exceed the cap. Keep a small grace
+        // overshoot so we don't splice on every event when right at the
+        // boundary (microbatching reduces work per frame).
+        const cap = SttView.MAX_MESSAGES;
+        if (newMessages.length > cap + 32) {
+            newMessages.splice(0, newMessages.length - cap);
+        }
+
         this.sttMessages = newMessages;
-        
+
         // Notify parent component about message updates
         this.dispatchEvent(new CustomEvent('stt-messages-updated', {
             detail: { messages: this.sttMessages },

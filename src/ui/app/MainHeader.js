@@ -483,9 +483,28 @@ export class MainHeader extends LitElement {
                 } else {
                     this.listenSessionStatus = 'beforeSession';
                 }
-                this.isTogglingSession = false; // ✨ 로딩 상태만 해제
+                this.isTogglingSession = false;
+                if (this._toggleTimeoutId) {
+                    clearTimeout(this._toggleTimeoutId);
+                    this._toggleTimeoutId = null;
+                }
             };
             window.api.mainHeader.onListenChangeSessionResult(this._sessionStateTextListener);
+
+            // Main broadcasts canonical state on system resume so a renderer
+            // that missed IPC during suspend can snap back to truth.
+            if (window.api.mainHeader.onListenStateReconcile) {
+                this._stateReconcileListener = (event, state) => {
+                    console.log('[MainHeader] state reconcile from main:', state);
+                    this.listenSessionStatus = state?.isActive ? 'inSession' : 'beforeSession';
+                    this.isTogglingSession = false;
+                    if (this._toggleTimeoutId) {
+                        clearTimeout(this._toggleTimeoutId);
+                        this._toggleTimeoutId = null;
+                    }
+                };
+                window.api.mainHeader.onListenStateReconcile(this._stateReconcileListener);
+            }
 
             this._shortcutListener = (event, keybinds) => {
                 console.log('[MainHeader] Received updated shortcuts:', keybinds);
@@ -504,9 +523,17 @@ export class MainHeader extends LitElement {
             this.animationEndTimer = null;
         }
         
+        if (this._toggleTimeoutId) {
+            clearTimeout(this._toggleTimeoutId);
+            this._toggleTimeoutId = null;
+        }
+
         if (window.api) {
             if (this._sessionStateTextListener) {
                 window.api.mainHeader.removeOnListenChangeSessionResult(this._sessionStateTextListener);
+            }
+            if (this._stateReconcileListener && window.api.mainHeader.removeOnListenStateReconcile) {
+                window.api.mainHeader.removeOnListenStateReconcile(this._stateReconcileListener);
             }
             if (this._shortcutListener) {
                 window.api.mainHeader.removeOnShortcutsUpdated(this._shortcutListener);
@@ -539,6 +566,25 @@ export class MainHeader extends LitElement {
 
         this.isTogglingSession = true;
 
+        // Safety: lid-close mid-toggle can suspend the renderer and drop the
+        // listen:changeSessionResult IPC, leaving the button stuck on the
+        // "stopping…" ellipsis. If no result arrives in 8s, force-clear the
+        // flag and ask main for canonical state.
+        if (this._toggleTimeoutId) clearTimeout(this._toggleTimeoutId);
+        this._toggleTimeoutId = setTimeout(async () => {
+            if (!this.isTogglingSession) return;
+            console.warn('[MainHeader] toggle timeout — reconciling state');
+            this.isTogglingSession = false;
+            try {
+                if (window.api?.mainHeader?.getListenState) {
+                    const s = await window.api.mainHeader.getListenState();
+                    this.listenSessionStatus = s?.isActive ? 'inSession' : 'beforeSession';
+                }
+            } catch (e) {
+                console.warn('[MainHeader] reconcile failed:', e);
+            }
+        }, 8000);
+
         try {
             const listenButtonText = this._getListenButtonText(this.listenSessionStatus);
             if (window.api) {
@@ -547,6 +593,10 @@ export class MainHeader extends LitElement {
         } catch (error) {
             console.error('IPC invoke for session change failed:', error);
             this.isTogglingSession = false;
+            if (this._toggleTimeoutId) {
+                clearTimeout(this._toggleTimeoutId);
+                this._toggleTimeoutId = null;
+            }
         }
     }
 

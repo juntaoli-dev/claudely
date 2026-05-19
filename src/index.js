@@ -42,7 +42,7 @@ process.on('unhandledRejection', (reason) => {
     console.error('[UnhandledRejection]', reason);
 });
 
-const { app, BrowserWindow, shell, ipcMain, dialog, desktopCapturer, session } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog, desktopCapturer, session, powerMonitor } = require('electron');
 const { createWindows } = require('./window/windowManager.js');
 const listenService = require('./features/listen/listenService');
 const databaseInitializer = require('./features/common/services/databaseInitializer');
@@ -236,6 +236,42 @@ app.whenReady().then(async () => {
                     console.warn('[autoListen] failed:', e.message);
                 }
             }, 1500);
+        }
+
+        // Suspend/resume hygiene. When the lid closes mid-recording, the Swift
+        // helper keeps holding mic+SCK handles, the renderer pauses (dropping
+        // any in-flight IPC), and on resume the audio routes are usually wrong
+        // anyway (Bluetooth re-pair, AirPods re-connect, default device flip).
+        // Tear down on suspend; on resume, broadcast canonical state so a
+        // header stuck on the "stopping…" ellipsis can snap back.
+        try {
+            const { windowPool } = require('./window/windowManager');
+            powerMonitor.on('suspend', () => {
+                console.log('[powerMonitor] suspend — closing listen session');
+                listenService.closeSession().catch((e) => {
+                    console.warn('[powerMonitor] closeSession on suspend failed:', e.message);
+                });
+            });
+            powerMonitor.on('resume', () => {
+                console.log('[powerMonitor] resume — broadcasting canonical state');
+                const header = windowPool?.get('header');
+                if (header && !header.isDestroyed()) {
+                    header.webContents.send('listen:stateReconcile', listenService.getCurrentState());
+                }
+            });
+            // lock-screen also pauses the renderer indefinitely on macOS; same fix.
+            powerMonitor.on('lock-screen', () => {
+                console.log('[powerMonitor] lock-screen — closing listen session');
+                listenService.closeSession().catch(() => {});
+            });
+            powerMonitor.on('unlock-screen', () => {
+                const header = windowPool?.get('header');
+                if (header && !header.isDestroyed()) {
+                    header.webContents.send('listen:stateReconcile', listenService.getCurrentState());
+                }
+            });
+        } catch (e) {
+            console.warn('[powerMonitor] wiring failed:', e.message);
         }
 
         // Warm calendar cache in the background so manual asks never wait

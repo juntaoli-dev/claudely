@@ -11,6 +11,13 @@ const sttRepository = require('./stt/repositories');
 const internalBridge = require('../../bridge/internalBridge');
 
 const IDLE_PROMPT_MS = Number(process.env.CLAUDELY_IDLE_PROMPT_MS) || 60 * 60 * 1000; // 1 hour
+// Separate "no speech detected" guard: meeting ended but the helper is still
+// piping silence to Deepgram (Deepgram emits no transcripts on pure silence,
+// so byte-counters keep climbing but nothing useful happens). Prompt the user
+// after this many ms of zero finals/interims so the session doesn't sit open
+// burning Deepgram minutes after the call ended.
+const AUDIO_IDLE_PROMPT_MS = Number(process.env.CLAUDELY_AUDIO_IDLE_PROMPT_MS) || 10 * 60 * 1000; // 10 minutes
+const AUDIO_IDLE_CHECK_MS = Number(process.env.CLAUDELY_AUDIO_IDLE_CHECK_MS) || 60 * 1000; // re-evaluate once a minute
 
 // Google Calendar exposes events at https://www.google.com/calendar/event?eid=<base64>
 // where <base64> is base64(`${icsUid} ${calendarId}`). We don't have the
@@ -41,7 +48,83 @@ class ListenService {
         // unkillable app. We give up after MAX in WINDOW_MS.
         this._restartAttempts = [];   // ms timestamps
         this._restartGiveUp = false;
+        // User-initiated stop must not race with the capture-exit auto-restart.
+        // Without this flag: user clicks Stop → closeSession() kills the Swift
+        // child → bus emits 'exit' → setTimeout(start, delay) fires → fresh
+        // session boots and transcripts resume while the UI is still showing
+        // "stopping…". Set on closeSession, cleared by any explicit start().
+        this._userStopRequested = false;
+        // Audio-idle guard state. Updated every time Deepgram emits a final or
+        // interim line; checked once a minute by _audioIdleTimer.
+        this._lastTranscriptAt = null;
+        this._audioIdleTimer = null;
+        this._audioIdlePromptShown = false;
         console.log('[ListenService] Service instance created.');
+    }
+
+    _scheduleAudioIdleCheck() {
+        if (this._audioIdleTimer) clearInterval(this._audioIdleTimer);
+        this._audioIdleTimer = setInterval(() => this._checkAudioIdle(), AUDIO_IDLE_CHECK_MS);
+    }
+
+    _cancelAudioIdleCheck() {
+        if (this._audioIdleTimer) {
+            clearInterval(this._audioIdleTimer);
+            this._audioIdleTimer = null;
+        }
+        this._audioIdlePromptShown = false;
+    }
+
+    _noteTranscriptActivity() {
+        this._lastTranscriptAt = Date.now();
+        this._audioIdlePromptShown = false;
+    }
+
+    _checkAudioIdle() {
+        if (!this.active) return;
+        if (this._audioIdlePromptShown) return;
+        if (!this._lastTranscriptAt) return;
+        const idleMs = Date.now() - this._lastTranscriptAt;
+        if (idleMs < AUDIO_IDLE_PROMPT_MS) return;
+
+        const { Notification } = require('electron');
+        const minutes = Math.floor(idleMs / 60_000);
+        const title = `No speech detected for ${minutes}m`;
+        const body = `Claudely hasn't picked up any speech in ${minutes}m. Pause the session, or keep listening?`;
+        try {
+            const n = new Notification({
+                title,
+                body,
+                actions: [{ type: 'button', text: 'Pause' }, { type: 'button', text: 'Keep listening' }],
+                closeButtonText: 'Dismiss',
+            });
+            this._audioIdlePromptShown = true;
+            n.on('action', (event, index) => {
+                if (index === 0) {
+                    console.log('[ListenService] audio-idle prompt → user paused');
+                    this.closeSession().catch(() => {});
+                } else {
+                    console.log('[ListenService] audio-idle prompt → keep listening');
+                    // Reset the clock so we re-prompt after another full window
+                    // of silence rather than immediately re-firing next minute.
+                    this._lastTranscriptAt = Date.now();
+                    this._audioIdlePromptShown = false;
+                }
+            });
+            n.on('click', () => {
+                this._lastTranscriptAt = Date.now();
+                this._audioIdlePromptShown = false;
+            });
+            n.on('close', () => {
+                this._lastTranscriptAt = Date.now();
+                this._audioIdlePromptShown = false;
+            });
+            n.show();
+        } catch (e) {
+            console.warn('[ListenService] could not show audio-idle notification:', e.message);
+            this._lastTranscriptAt = Date.now();
+            this._audioIdlePromptShown = false;
+        }
     }
 
     _scheduleIdlePrompt() {
@@ -165,6 +248,7 @@ class ListenService {
         // attempt window so a fresh user-driven session gets a clean budget.
         this._restartGiveUp = false;
         this._restartAttempts = [];
+        this._userStopRequested = false;
         this.sendToRenderer('update-status', 'Starting capture…');
 
         try {
@@ -178,6 +262,7 @@ class ListenService {
 
             this.active = stt.start({
                 onFinal: (line) => {
+                    this._noteTranscriptActivity();
                     this._pushStt(line, true);
                     if (this.currentSessionId) {
                         try {
@@ -192,7 +277,10 @@ class ListenService {
                         }
                     }
                 },
-                onInterim: (line) => this._pushStt(line, false),
+                onInterim: (line) => {
+                    this._noteTranscriptActivity();
+                    this._pushStt(line, false);
+                },
                 onState: (s) => {
                     if (s.type === 'listening') this.sendToRenderer('update-status', 'Listening…');
                     else if (s.type === 'error') this.sendToRenderer('update-status', `ERR: ${s.error}`);
@@ -209,6 +297,31 @@ class ListenService {
                         const wasActive = this.active;
                         this.active = null;
                         try { wasActive?.stop?.(); } catch (_) {}
+
+                        // User clicked Stop. closeSession() killed the child;
+                        // the resulting exit must NOT auto-restart and resurrect
+                        // the session under the user's feet.
+                        if (this._userStopRequested) {
+                            console.log('[ListenService] capture exited after user stop; not restarting');
+                            return;
+                        }
+
+                        // Device-route change exit (exit code 75 from the Swift
+                        // helper). User plugged in AirPods or switched output
+                        // device; respawn immediately and don't consume the
+                        // crash-loop budget.
+                        if (code === 75) {
+                            console.log('[ListenService] capture exited for device-route change — restarting immediately');
+                            this.sendToRenderer('update-status', 'Audio device changed, reattaching…');
+                            setImmediate(() => {
+                                if (this.active || this._userStopRequested) return;
+                                this.start().catch((e) => {
+                                    console.warn('[ListenService] route-change restart failed:', e.message);
+                                    this.sendToRenderer('update-status', `restart failed: ${e.message}`);
+                                });
+                            });
+                            return;
+                        }
 
                         const MAX = 3;
                         const WINDOW_MS = 60_000;
@@ -233,6 +346,7 @@ class ListenService {
                         setTimeout(() => {
                             if (this.active) return;       // user already restarted
                             if (this._restartGiveUp) return;
+                            if (this._userStopRequested) return;
                             this.start().catch((e) => {
                                 console.warn('[ListenService] auto-restart failed:', e.message);
                                 this.sendToRenderer('update-status', `restart failed: ${e.message}`);
@@ -244,7 +358,10 @@ class ListenService {
             });
             this.sendToRenderer('update-status', 'Connected');
             this.sessionStartedAt = Date.now();
+            this._lastTranscriptAt = Date.now();
+            this._audioIdlePromptShown = false;
             this._scheduleIdlePrompt();
+            this._scheduleAudioIdleCheck();
         } finally {
             this.isInitializing = false;
             this.sendToRenderer('change-listen-capture-state', { status: 'start' });
@@ -255,8 +372,22 @@ class ListenService {
         return !!this.active;
     }
 
+    // Canonical state for UI reconcile (e.g. after a lid-close suspend dropped
+    // the listen:changeSessionResult IPC and left the header stuck on the
+    // "stopping…" ellipsis).
+    getCurrentState() {
+        return {
+            isActive: !!this.active,
+            isInitializing: !!this.isInitializing,
+        };
+    }
+
     async closeSession() {
         this._cancelIdlePrompt();
+        this._cancelAudioIdleCheck();
+        // Block the capture-exit handler from auto-restarting the session we're
+        // tearing down. Cleared by the next explicit start().
+        this._userStopRequested = true;
         const recordedFrom = this.sessionStartedAt ? new Date(this.sessionStartedAt) : null;
         const recordedTo = new Date();
         this.sessionStartedAt = null;
@@ -447,3 +578,4 @@ class ListenService {
 
 const listenService = new ListenService();
 module.exports = listenService;
+module.exports.ListenService = ListenService;

@@ -91,6 +91,7 @@ module.exports = {
     ipcMain.handle('listen:startMacosSystemAudio', async () => await listenService.handleStartMacosAudio());
     ipcMain.handle('listen:stopMacosSystemAudio', async () => await listenService.handleStopMacosAudio());
     ipcMain.handle('listen:isSessionActive', async () => await listenService.isSessionActive());
+    ipcMain.handle('listen:getState', async () => listenService.getCurrentState());
     ipcMain.handle('listen:changeSession', async (event, listenButtonText) => {
       try {
         await listenService.handleListenRequest(listenButtonText);

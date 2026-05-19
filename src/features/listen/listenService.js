@@ -260,6 +260,26 @@ class ListenService {
                 this.currentSessionId = null;
             }
 
+            // Tell the fire instance which DB row to use for Claude resume
+            // bookkeeping. Cleared on closeSession so a manual ask after stop
+            // doesn't accidentally resume a Listen-session conversation.
+            try {
+                const { updateActiveListenSessionId } = require('../fire/instance');
+                updateActiveListenSessionId(this.currentSessionId);
+            } catch (_) { /* fire instance optional */ }
+
+            // Fresh Listen session starts with a fresh Claude conversation —
+            // wipe any stale resume id from this DB row in case the user is
+            // restarting an old session that has one persisted.
+            if (this.currentSessionId) {
+                try {
+                    sessionRepository.setClaudeContext(this.currentSessionId, {
+                        claudeSessionId: null,
+                        lastTranscriptSentTs: null,
+                    });
+                } catch (_) {}
+            }
+
             this.active = stt.start({
                 onFinal: (line) => {
                     this._noteTranscriptActivity();
@@ -566,6 +586,10 @@ class ListenService {
             try { await sessionRepository.end(this.currentSessionId); } catch (_) {}
             this.currentSessionId = null;
         }
+        try {
+            const { updateActiveListenSessionId } = require('../fire/instance');
+            updateActiveListenSessionId(null);
+        } catch (_) {}
         return { success: true };
     }
 

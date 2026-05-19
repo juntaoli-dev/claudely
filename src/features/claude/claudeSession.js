@@ -56,17 +56,21 @@ class ClaudeSession {
     return this._query;
   }
 
-  async ask({ question, transcriptTail, imagePath, onDelta, onEvent }) {
+  async ask({ question, transcriptTail, imagePath, onDelta, onEvent, resumeSessionId = null, isFirstAsk = true }) {
     if (process.env.ANTHROPIC_DRY_RUN === '1') {
-      const payload = JSON.stringify({ question, transcriptTail, imagePath });
+      const payload = JSON.stringify({ question, transcriptTail, imagePath, resumeSessionId, isFirstAsk });
       console.log('[DRY-RUN]', payload);
       onDelta?.('[dry-run]');
-      return;
+      return { sessionId: resumeSessionId || 'dry-run-session' };
     }
 
     const parts = [];
     if (transcriptTail) {
-      parts.push(`Recent transcript:\n${transcriptTail}`);
+      // Label changes meaning when we're resuming a prior session — the
+      // prompt only carries the delta since the last ask, and Claude has
+      // the earlier turns in its conversation state via --resume.
+      const heading = isFirstAsk ? 'Meeting transcript so far' : 'New transcript since last question';
+      parts.push(`${heading}:\n${transcriptTail}`);
     }
     if (imagePath) {
       parts.push(`Attached screenshot available at: ${imagePath}\n(Use the Read tool to inspect it if relevant.)`);
@@ -81,12 +85,21 @@ class ClaudeSession {
       disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
     };
     if (this.model) options.model = this.model;
+    if (resumeSessionId) options.resume = resumeSessionId;
     const cli = resolveClaudeCliPath();
     if (cli) options.pathToClaudeCodeExecutable = cli;
     else console.warn('[ClaudeSession] no `claude` CLI found on disk; SDK will fall back to its bundled cli.js (likely ENOTDIR inside asar).');
     const iterator = queryFn({ prompt, options });
 
+    // Capture session_id so the caller can pass it back on the next ask for
+    // continuity. The SDK emits it on the system init message and again on
+    // the final result message; whichever lands first is fine.
+    let capturedSessionId = resumeSessionId || null;
+
     for await (const msg of iterator) {
+      if (msg.type === 'system' && msg.subtype === 'init' && msg.session_id) {
+        capturedSessionId = msg.session_id;
+      }
       // Surface every block — tool_use, tool_result, text — as either a
       // structured event (for callers that want to render them custom) and
       // as a textual delta with an emoji marker so the existing answer pane
@@ -111,9 +124,12 @@ class ClaudeSession {
           }
         }
       } else if (msg.type === 'result') {
+        if (msg.session_id) capturedSessionId = msg.session_id;
         onEvent?.({ kind: 'result', subtype: msg.subtype });
       }
     }
+
+    return { sessionId: capturedSessionId };
   }
 }
 

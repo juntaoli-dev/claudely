@@ -36,6 +36,18 @@ class TranscriptStore {
             .join('\n');
     }
 
+    // Formatted transcript of every line newer than the given epoch-ms
+    // timestamp. Used to send only the delta since the last ask to Claude
+    // when the Listen session has a resumable Claude session id. Pass 0 to
+    // get the entire in-memory window.
+    since(ts) {
+        const t = Number(ts) || 0;
+        return this.lines
+            .filter((l) => l.ts > t)
+            .map((l) => `${l.speaker}: ${l.text}`)
+            .join('\n');
+    }
+
     all() { return [...this.lines]; }
 
     close() {

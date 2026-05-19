@@ -31,18 +31,52 @@ function getClaude() {
 }
 
 // Active listen context: sttService sets these on listen:start, clears on stop.
+// listenServiceSessionId is the DB sessions.id row for the live Listen
+// session — the row that holds claude_session_id + last_transcript_sent_ts.
 let activeStore = null;
 let activeClassifier = null;
-function setActiveListenContext({ store, classifier }) {
+let activeListenSessionId = null;
+function setActiveListenContext({ store, classifier, listenSessionId = null }) {
     activeStore = store || null;
     activeClassifier = classifier || null;
+    activeListenSessionId = listenSessionId || null;
 }
 function clearActiveListenContext() {
     activeStore = null;
     activeClassifier = null;
+    activeListenSessionId = null;
 }
 function getActiveStore() { return activeStore; }
 function getActiveClassifier() { return activeClassifier; }
+function getActiveListenSessionId() { return activeListenSessionId; }
+
+// Patch just the listen-session id without disturbing store/classifier.
+// Called by listenService once it knows the DB sessions.id, which arrives
+// AFTER sttService has already wired the store + classifier.
+function updateActiveListenSessionId(id) {
+    activeListenSessionId = id || null;
+}
+
+// Build a per-dispatcher provider that reads/writes the Claude resume row
+// on the LIVE Listen session at fire time. Captured at construction so a
+// dispatcher built mid-session keeps pointing at the same row even if a
+// later Listen session starts; returns null in non-Listen contexts so the
+// dispatcher falls back to the legacy 30s-tail no-resume path.
+function buildClaudeContextProvider() {
+    const listenSessionId = activeListenSessionId;
+    if (!listenSessionId) return null;
+    const sessionRepository = require('../common/repositories/session');
+    return {
+        get() {
+            try { return sessionRepository.getClaudeContext(listenSessionId); }
+            catch (_) { return { claudeSessionId: null, lastTranscriptSentTs: null }; }
+        },
+        set(ctx) {
+            try { sessionRepository.setClaudeContext(listenSessionId, ctx); }
+            catch (_) { /* best-effort */ }
+        },
+    };
+}
 
 function buildDispatcher({ store, classifier, onState }) {
     return new FireDispatcher({
@@ -52,6 +86,7 @@ function buildDispatcher({ store, classifier, onState }) {
         claude: getClaude(),
         config,
         onState: onState || (() => {}),
+        claudeContextProvider: buildClaudeContextProvider(),
     });
 }
 
@@ -68,4 +103,6 @@ module.exports = {
     clearActiveListenContext,
     getActiveStore,
     getActiveClassifier,
+    getActiveListenSessionId,
+    updateActiveListenSessionId,
 };

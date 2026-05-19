@@ -18,7 +18,14 @@ const LATEST_SCHEMA = {
             { name: 'started_at', type: 'INTEGER' },
             { name: 'ended_at', type: 'INTEGER' },
             { name: 'sync_state', type: 'TEXT DEFAULT \'clean\'' },
-            { name: 'updated_at', type: 'INTEGER' }
+            { name: 'updated_at', type: 'INTEGER' },
+            // Claude Code CLI session resumption (per Listen session). Lets
+            // each ask send only the transcript delta since the last ask
+            // rather than the entire meeting; Claude remembers prior turns
+            // via --resume <id>. Both are NULL until the first successful
+            // ask within the Listen session.
+            { name: 'claude_session_id', type: 'TEXT' },
+            { name: 'last_transcript_sent_ts', type: 'INTEGER' }
         ]
     },
     transcripts: {

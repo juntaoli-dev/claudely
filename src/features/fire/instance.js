@@ -36,10 +36,15 @@ function getClaude() {
 let activeStore = null;
 let activeClassifier = null;
 let activeListenSessionId = null;
-function setActiveListenContext({ store, classifier, listenSessionId = null }) {
-    activeStore = store || null;
-    activeClassifier = classifier || null;
-    activeListenSessionId = listenSessionId || null;
+// Partial-update semantics: only keys present in the call modify state.
+// sttService calls with { store, classifier } and must NOT clobber the
+// listenSessionId that listenService set moments earlier. Equally,
+// updateActiveListenSessionId must not wipe the store. This used to silently
+// blank activeListenSessionId every stt.start, breaking the resume path.
+function setActiveListenContext(ctx = {}) {
+    if ('store' in ctx) activeStore = ctx.store || null;
+    if ('classifier' in ctx) activeClassifier = ctx.classifier || null;
+    if ('listenSessionId' in ctx) activeListenSessionId = ctx.listenSessionId || null;
 }
 function clearActiveListenContext() {
     activeStore = null;

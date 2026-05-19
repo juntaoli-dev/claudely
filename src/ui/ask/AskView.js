@@ -15,6 +15,10 @@ export class AskView extends LitElement {
         headerAnimating: { type: Boolean },
         isStreaming: { type: Boolean },
         toolProgress: { type: String },
+        // Prior completed Q+A turns within the current Listen session, oldest
+        // first. Rendered above the current response so the user can scroll
+        // up and re-read earlier turns without losing the live answer.
+        turnHistory: { type: Array },
     };
 
     static styles = css`
@@ -374,6 +378,47 @@ export class AskView extends LitElement {
             position: relative;
         }
 
+        /* Prior Q+A turns stacked above the current answer. Each pair gets a
+           subtle divider; question is dimmed so the live answer stays the
+           visual focus. */
+        .history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+        .history-list:empty { display: none; }
+        .history-turn {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .history-q {
+            font-size: 12px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.6);
+            white-space: pre-wrap;
+        }
+        .history-q::before { content: '› '; opacity: 0.6; }
+        .history-a {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.85);
+        }
+        .history-a p { margin: 0 0 6px 0; }
+        .history-a pre {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 8px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+        .history-a code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+        }
+
         .response-container.hidden {
             display: none;
         }
@@ -723,6 +768,7 @@ export class AskView extends LitElement {
         this.headerAnimating = false;
         this.isStreaming = false;
         this.toolProgress = '';
+        this.turnHistory = [];
 
         this.marked = null;
         this.hljs = null;
@@ -789,15 +835,34 @@ export class AskView extends LitElement {
             window.api.askView.onScrollResponseUp(() => this.handleScroll('up'));
             window.api.askView.onScrollResponseDown(() => this.handleScroll('down'));
             window.api.askView.onAskStateUpdate((event, newState) => {
+                // A new question is starting when askService transitions to
+                // isLoading=true with a different currentQuestion. At that
+                // moment our local currentResponse still holds the previous
+                // completed answer — capture it before it gets overwritten.
+                const isNewAsk =
+                    newState.isLoading &&
+                    newState.currentQuestion &&
+                    newState.currentQuestion !== this.currentQuestion;
+                if (isNewAsk && this.currentQuestion && this.currentResponse) {
+                    this.turnHistory = [
+                        ...this.turnHistory,
+                        {
+                            id: Date.now() + '-' + this.turnHistory.length,
+                            question: this.currentQuestion,
+                            response: this.currentResponse,
+                        },
+                    ];
+                }
+
                 this.currentResponse = newState.currentResponse;
                 this.currentQuestion = newState.currentQuestion;
                 this.isLoading       = newState.isLoading;
                 this.isStreaming     = newState.isStreaming;
                 this.toolProgress    = newState.toolProgress || '';
-              
+
                 const wasHidden = !this.showTextInput;
                 this.showTextInput = newState.showTextInput;
-              
+
                 if (newState.showTextInput) {
                   if (wasHidden) {
                     this.updateComplete.then(() => this.focusTextInput());
@@ -806,6 +871,15 @@ export class AskView extends LitElement {
                   }
                 }
               });
+
+            // Clear history when the Listen session itself restarts — the
+            // resumed Claude conversation also resets (new session_id), so the
+            // prior turns no longer have shared context with the new ones.
+            if (window.api.askView.onListenSessionReset) {
+                window.api.askView.onListenSessionReset(() => {
+                    this.turnHistory = [];
+                });
+            }
             console.log('AskView: IPC 이벤트 리스너 등록 완료');
         }
     }
@@ -926,6 +1000,7 @@ export class AskView extends LitElement {
         this.lastProcessedLength = 0;
         this.smdParser = null;
         this.smdContainer = null;
+        this.turnHistory = [];
     }
 
     handleInputFocus() {
@@ -994,9 +1069,9 @@ export class AskView extends LitElement {
 
 
     renderContent() {
-        const responseContainer = this.shadowRoot.getElementById('responseContainer');
-        if (!responseContainer) return;
-    
+        const slot = this.shadowRoot.getElementById('currentResponseSlot');
+        if (!slot) return;
+
         // Show in-progress tool calls (e.g. Read / Grep / Bash) above the
         // answer so the user sees activity while Claude is still thinking.
         const progressBlock = (this.toolProgress && (this.isLoading || this.isStreaming))
@@ -1007,7 +1082,7 @@ export class AskView extends LitElement {
 
         // Check loading state
         if (this.isLoading) {
-            responseContainer.innerHTML = `
+            slot.innerHTML = `
               ${progressBlock}
               <div class="loading-dots">
                 <div class="loading-dot"></div>
@@ -1017,19 +1092,45 @@ export class AskView extends LitElement {
             this.resetStreamingParser();
             return;
         }
-        
-        // If there is no response, show empty state
+
+        // If there is no response, show empty state — but only if there's
+        // also no scrollback history. With history present, the slot stays
+        // empty (history bubbles fill the visible area).
         if (!this.currentResponse) {
-            responseContainer.innerHTML = `<div class="empty-state">...</div>`;
+            slot.innerHTML = this.turnHistory.length === 0 ? `<div class="empty-state">...</div>` : '';
             this.resetStreamingParser();
             return;
         }
-        
-        // Set streaming markdown parser
-        this.renderStreamingMarkdown(responseContainer);
+
+        // Set streaming markdown parser, targeting the current slot only
+        this.renderStreamingMarkdown(slot);
 
         // After updating content, recalculate window height
         this.adjustWindowHeightThrottled();
+    }
+
+    // Imperatively rebuild the history list. Called from updated() when
+    // turnHistory changes. Kept outside the Lit template so Lit never
+    // re-creates the DOM nodes that the smd parser also writes to.
+    _renderHistory() {
+        const list = this.shadowRoot.getElementById('historyList');
+        if (!list) return;
+        const escape = (s) => String(s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        list.innerHTML = this.turnHistory.map((turn) => `
+            <div class="history-turn">
+                <div class="history-q">${escape(turn.question)}</div>
+                <div class="history-a">${this.parseMarkdown(turn.response)}</div>
+            </div>
+        `).join('');
+        // Highlight code blocks in history if hljs is loaded
+        if (this.hljs) {
+            list.querySelectorAll('pre code').forEach((block) => {
+                if (!block.hasAttribute('data-highlighted')) {
+                    this.hljs.highlightElement(block);
+                    block.setAttribute('data-highlighted', 'true');
+                }
+            });
+        }
     }
 
     resetStreamingParser() {
@@ -1076,9 +1177,12 @@ export class AskView extends LitElement {
                 });
             }
 
-            // 스크롤을 맨 아래로
-            responseContainer.scrollTop = responseContainer.scrollHeight;
-            
+            // Scroll the OUTER scrollable container (responseContainer) to
+            // bottom so the live answer stays in view as it streams. The
+            // function param is the inner slot now, so look up the parent.
+            const outer = this.shadowRoot.getElementById('responseContainer');
+            if (outer) outer.scrollTop = outer.scrollHeight;
+
         } catch (error) {
             console.error('Error rendering streaming markdown:', error);
             // 에러 발생 시 기본 텍스트 렌더링으로 폴백
@@ -1312,16 +1416,21 @@ export class AskView extends LitElement {
 
     updated(changedProperties) {
         super.updated(changedProperties);
-    
-        // ✨ isLoading 또는 currentResponse가 변경될 때마다 뷰를 다시 그립니다.
+
         if (changedProperties.has('isLoading') || changedProperties.has('currentResponse')) {
             this.renderContent();
         }
-    
+
+        if (changedProperties.has('turnHistory')) {
+            this._renderHistory();
+            // History height changes — re-fit window.
+            this.adjustWindowHeightThrottled();
+        }
+
         if (changedProperties.has('showTextInput') || changedProperties.has('isLoading') || changedProperties.has('currentResponse')) {
             this.adjustWindowHeightThrottled();
         }
-    
+
         if (changedProperties.has('showTextInput') && this.showTextInput) {
             this.focusTextInput();
         }
@@ -1329,6 +1438,9 @@ export class AskView extends LitElement {
 
     firstUpdated() {
         setTimeout(() => this.adjustWindowHeight(), 200);
+        // History list is empty on first paint but render once anyway so the
+        // DOM nodes exist for subsequent updated() calls.
+        this._renderHistory();
     }
 
 
@@ -1387,9 +1499,13 @@ export class AskView extends LitElement {
                     </div>
                 </div>
 
-                <!-- Response Container -->
-                <div class="response-container ${!hasResponse ? 'hidden' : ''}" id="responseContainer">
-                    <!-- Content is dynamically generated in updateResponseContent() -->
+                <!-- Response Container.
+                     historyList + currentResponseSlot are rebuilt imperatively
+                     in renderContent() / _renderHistory(); Lit doesn't touch
+                     their innerHTML so the smd parser keeps a stable target. -->
+                <div class="response-container ${!hasResponse && this.turnHistory.length === 0 ? 'hidden' : ''}" id="responseContainer">
+                    <div class="history-list" id="historyList"></div>
+                    <div class="current-response-slot" id="currentResponseSlot"></div>
                 </div>
 
                 <!-- Text Input Container -->

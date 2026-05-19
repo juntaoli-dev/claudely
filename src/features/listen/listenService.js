@@ -185,6 +185,25 @@ class ListenService {
         }
     }
 
+    // Push the canonical "is the session active right now" state to BOTH the
+    // header (listen:stateReconcile, drives the Listen/Stop/Done button text)
+    // and the listen pane (session-state-changed, drives the "Claudely is
+    // Listening" timer). Used by start/closeSession and by the powerMonitor
+    // resume handler so the two UI surfaces never disagree about whether STT
+    // is running.
+    broadcastCanonicalState() {
+        const { windowPool } = require('../../window/windowManager');
+        const state = this.getCurrentState();
+        const header = windowPool?.get('header');
+        const listenWindow = windowPool?.get('listen');
+        if (header && !header.isDestroyed()) {
+            header.webContents.send('listen:stateReconcile', state);
+        }
+        if (listenWindow && !listenWindow.isDestroyed()) {
+            listenWindow.webContents.send('session-state-changed', { isActive: state.isActive });
+        }
+    }
+
     _pushStt(line, isFinal) {
         // Renderer SttView contract: { speaker, text, isFinal, isPartial }
         this.sendToRenderer('stt-update', {
@@ -355,6 +374,7 @@ class ListenService {
                             this.sendToRenderer('update-status', `capture keeps dying (code ${code}); stopped retrying. Click Listen to try again.`);
                             this.sendToRenderer('session-state-changed', { isActive: false });
                             this.sendToRenderer('change-listen-capture-state', { status: 'stop' });
+                            this.broadcastCanonicalState();
                             return;
                         }
 
@@ -385,6 +405,7 @@ class ListenService {
         } finally {
             this.isInitializing = false;
             this.sendToRenderer('change-listen-capture-state', { status: 'start' });
+            this.broadcastCanonicalState();
         }
     }
 
@@ -419,6 +440,7 @@ class ListenService {
             console.warn('[ListenService] stop error:', e.message);
         }
         this.active = null;
+        this.broadcastCanonicalState();
 
         // Copy this session's transcript .jsonl + a meta sidecar (calendar
         // event(s) that overlapped the recording) + Q&A history + screenshots

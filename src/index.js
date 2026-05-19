@@ -249,37 +249,38 @@ app.whenReady().then(async () => {
             }, 1500);
         }
 
-        // Suspend/resume hygiene. When the lid closes mid-recording, the Swift
-        // helper keeps holding mic+SCK handles, the renderer pauses (dropping
-        // any in-flight IPC), and on resume the audio routes are usually wrong
-        // anyway (Bluetooth re-pair, AirPods re-connect, default device flip).
-        // Tear down on suspend; on resume, broadcast canonical state so a
-        // header stuck on the "stopping…" ellipsis can snap back.
+        // Suspend/resume hygiene. macOS suspends the Swift child along with the
+        // app, so the capture stream stops on lid close anyway. If the helper
+        // dies during suspend, capture-exit auto-restart handles it on resume.
+        // We do NOT closeSession() here — that was overkill and led to the
+        // header showing "Listen" while the listen pane still showed
+        // "Listening" because the two UI surfaces resync via different IPC
+        // channels and only one (the header) got the reconcile broadcast.
+        //
+        // What we DO need on resume/unlock: re-broadcast canonical state to
+        // BOTH the header (listen:stateReconcile) AND the listen pane
+        // (session-state-changed) so they snap back in lockstep if either
+        // drifted due to dropped IPC during suspend.
         try {
             const { windowPool } = require('./window/windowManager');
-            powerMonitor.on('suspend', () => {
-                console.log('[powerMonitor] suspend — closing listen session');
-                listenService.closeSession().catch((e) => {
-                    console.warn('[powerMonitor] closeSession on suspend failed:', e.message);
-                });
-            });
+            const broadcastCanonicalState = () => {
+                const state = listenService.getCurrentState();
+                const header = windowPool?.get('header');
+                const listenWindow = windowPool?.get('listen');
+                if (header && !header.isDestroyed()) {
+                    header.webContents.send('listen:stateReconcile', state);
+                }
+                if (listenWindow && !listenWindow.isDestroyed()) {
+                    listenWindow.webContents.send('session-state-changed', { isActive: state.isActive });
+                }
+            };
             powerMonitor.on('resume', () => {
                 console.log('[powerMonitor] resume — broadcasting canonical state');
-                const header = windowPool?.get('header');
-                if (header && !header.isDestroyed()) {
-                    header.webContents.send('listen:stateReconcile', listenService.getCurrentState());
-                }
-            });
-            // lock-screen also pauses the renderer indefinitely on macOS; same fix.
-            powerMonitor.on('lock-screen', () => {
-                console.log('[powerMonitor] lock-screen — closing listen session');
-                listenService.closeSession().catch(() => {});
+                broadcastCanonicalState();
             });
             powerMonitor.on('unlock-screen', () => {
-                const header = windowPool?.get('header');
-                if (header && !header.isDestroyed()) {
-                    header.webContents.send('listen:stateReconcile', listenService.getCurrentState());
-                }
+                console.log('[powerMonitor] unlock-screen — broadcasting canonical state');
+                broadcastCanonicalState();
             });
         } catch (e) {
             console.warn('[powerMonitor] wiring failed:', e.message);

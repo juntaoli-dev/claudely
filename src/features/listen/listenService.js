@@ -289,7 +289,11 @@ class ListenService {
 
             // Fresh Listen session starts with a fresh Claude conversation —
             // wipe any stale resume id from this DB row in case the user is
-            // restarting an old session that has one persisted.
+            // restarting an old session that has one persisted. Also tell the
+            // ask window so it drops its Q+A scrollback: those bubbles point
+            // at the old --resume id Claude no longer knows about, and
+            // leaving them visible makes follow-up asks look continuous when
+            // they really aren't.
             if (this.currentSessionId) {
                 try {
                     sessionRepository.setClaudeContext(this.currentSessionId, {
@@ -298,6 +302,13 @@ class ListenService {
                     });
                 } catch (_) {}
             }
+            try {
+                const { windowPool } = require('../../window/windowManager');
+                const askWindow = windowPool?.get('ask');
+                if (askWindow && !askWindow.isDestroyed()) {
+                    askWindow.webContents.send('listen:sessionReset');
+                }
+            } catch (_) { /* ask window may not exist yet */ }
 
             this.active = stt.start({
                 onFinal: (line) => {

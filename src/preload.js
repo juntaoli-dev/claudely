@@ -160,6 +160,13 @@ contextBridge.exposeInMainWorld('api', {
     onAskStateUpdate: (callback) => ipcRenderer.on('ask:stateUpdate', callback),
     removeOnAskStateUpdate: (callback) => ipcRenderer.removeListener('ask:stateUpdate', callback),
 
+    // Listen STT restarted (capture-exit auto-restart, device-route change,
+    // user Listen-button cycle). AskView clears its turnHistory because the
+    // resumable Claude session id was wiped — prior bubbles no longer share
+    // context with new asks, so showing them is misleading.
+    onListenSessionReset: (callback) => ipcRenderer.on('listen:sessionReset', callback),
+    removeOnListenSessionReset: (callback) => ipcRenderer.removeListener('listen:sessionReset', callback),
+
     onAskStreamError: (callback) => ipcRenderer.on('ask-response-stream-error', callback),
     removeOnAskStreamError: (callback) => ipcRenderer.removeListener('ask-response-stream-error', callback),
 

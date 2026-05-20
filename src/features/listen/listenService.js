@@ -413,6 +413,28 @@ class ListenService {
             this._audioIdlePromptShown = false;
             this._scheduleIdlePrompt();
             this._scheduleAudioIdleCheck();
+
+            // Spam-protection: a closeSession() call that fired WHILE this
+            // start() was awaiting DB / stt boot set _userStopRequested=true
+            // and ran its teardown against a still-null this.active. Without
+            // this check the freshly-spun STT would be orphaned — running,
+            // appending to a jsonl with no DB row linkage, immune to Stop.
+            if (this._userStopRequested) {
+                console.warn('[ListenService] start() saw _userStopRequested set mid-init; tearing down');
+                try { this.active?.stop?.(); } catch (_) {}
+                this.active = null;
+                this.sessionStartedAt = null;
+                this._cancelIdlePrompt();
+                this._cancelAudioIdleCheck();
+                if (this.currentSessionId) {
+                    try { sessionRepository.end(this.currentSessionId); } catch (_) {}
+                    this.currentSessionId = null;
+                }
+                try {
+                    const { updateActiveListenSessionId } = require('../fire/instance');
+                    updateActiveListenSessionId(null);
+                } catch (_) {}
+            }
         } finally {
             this.isInitializing = false;
             this.sendToRenderer('change-listen-capture-state', { status: 'start' });
@@ -435,6 +457,14 @@ class ListenService {
     }
 
     async closeSession() {
+        // Idempotent: if there's nothing to clean up, skip cleanly so a
+        // double-Stop click is a no-op. We DO proceed when isInitializing is
+        // true even with no active yet — that's the mid-init race the
+        // tail-end check in start() relies on (_userStopRequested must be
+        // visible by the time start() returns).
+        if (!this.active && !this.currentSessionId && !this.idleTimer && !this._audioIdleTimer && !this.isInitializing) {
+            return { success: true };
+        }
         this._cancelIdlePrompt();
         this._cancelAudioIdleCheck();
         // Block the capture-exit handler from auto-restarting the session we're
@@ -485,7 +515,21 @@ class ListenService {
     // screenshot scan → meta sidecar write → Claude summary → Drive upload.
     // Each step is best-effort and logs to console on failure. Runs detached
     // from the IPC reply so the Stop button never spins.
+    //
+    // Spam guard: if the user just stop/start-cycled (or hit Stop before any
+    // audio came in), we skip the entire pipeline. Otherwise spamming Stop
+    // would fire one `claude` CLI subprocess per cycle to summarise a
+    // ~0-second session, burning CC subscription budget on empty .jsonls and
+    // dumping junk .summary.md files into the sync folder. Threshold is
+    // intentionally generous so a quick "pause-to-check-something-then-resume"
+    // also gets silently dropped.
     _finishSessionAsync({ finishedStore, recordedFrom, recordedTo, sessionIdAtClose }) {
+        const MIN_SESSION_MS = Number(process.env.CLAUDELY_MIN_SIDECAR_MS) || 30_000;
+        const durationMs = recordedFrom ? (recordedTo - recordedFrom) : 0;
+        if (!recordedFrom || durationMs < MIN_SESSION_MS) {
+            console.log(`[ListenService] skipping sidecar — session too short (${durationMs}ms < ${MIN_SESSION_MS}ms threshold)`);
+            return;
+        }
         (async () => {
             try {
             const path = require('path');

@@ -144,6 +144,38 @@ describe('ListenService stop race + device-route restart', () => {
         expect(svc._audioIdlePromptShown).toBe(false);
     });
 
+    it('idempotent: closeSession is a no-op when nothing is running', async () => {
+        const result = await svc.closeSession();
+        expect(result).toEqual({ success: true });
+        // sendToRenderer should NOT have been called — we early-returned.
+        expect(svc.sendToRenderer).not.toHaveBeenCalled();
+    });
+
+    it('skips sidecar pipeline when session was shorter than threshold (spam protection)', async () => {
+        let finishEntered = false;
+        const origFinish = svc._finishSessionAsync.bind(svc);
+        svc._finishSessionAsync = (args) => {
+            // Call the real one; verify it short-circuits because duration < 30s.
+            const before = finishEntered;
+            const r = origFinish(args);
+            // Use a side-effect proxy: stub log to detect the "skipping sidecar" line.
+            return r;
+        };
+
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        await svc.start();
+        // Force a fake short duration by mutating sessionStartedAt to "just now".
+        svc.sessionStartedAt = Date.now() - 1000; // 1s session
+        await svc.closeSession();
+
+        const skipped = logSpy.mock.calls.some((call) =>
+            String(call[0] || '').includes('skipping sidecar — session too short')
+        );
+        expect(skipped).toBe(true);
+        logSpy.mockRestore();
+        svc._finishSessionAsync = origFinish;
+    });
+
     it('closeSession returns fast even when sidecar work is slow', async () => {
         await svc.start();
 

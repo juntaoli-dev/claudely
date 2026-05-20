@@ -453,10 +453,41 @@ class ListenService {
         this.active = null;
         this.broadcastCanonicalState();
 
-        // Copy this session's transcript .jsonl + a meta sidecar (calendar
-        // event(s) that overlapped the recording) + Q&A history + screenshots
-        // into the sync folder so each upload carries full meeting context.
+        // End the DB row + clear bookkeeping NOW so the UI's Stop click
+        // resolves instantly. The Stop button used to "load" for several
+        // seconds because everything below (transcript copy, calendar lookup,
+        // screenshot scan, meta sidecar write, summary fire) blocked the
+        // returned Promise. Capture the session id before clearing so the
+        // background sidecar work still has it.
+        const sessionIdAtClose = this.currentSessionId;
+        if (this.currentSessionId) {
+            try { sessionRepository.end(this.currentSessionId); } catch (_) {}
+            this.currentSessionId = null;
+        }
         try {
+            const { updateActiveListenSessionId } = require('../fire/instance');
+            updateActiveListenSessionId(null);
+        } catch (_) {}
+
+        // Fire-and-forget the sidecar pipeline. Errors surface in console
+        // only; the user-facing stop is already done.
+        this._finishSessionAsync({
+            finishedStore,
+            recordedFrom,
+            recordedTo,
+            sessionIdAtClose,
+        });
+
+        return { success: true };
+    }
+
+    // Background tail of closeSession(): transcript copy → calendar lookup →
+    // screenshot scan → meta sidecar write → Claude summary → Drive upload.
+    // Each step is best-effort and logs to console on failure. Runs detached
+    // from the IPC reply so the Stop button never spins.
+    _finishSessionAsync({ finishedStore, recordedFrom, recordedTo, sessionIdAtClose }) {
+        (async () => {
+            try {
             const path = require('path');
             const fs = require('fs');
             const os = require('os');
@@ -546,7 +577,7 @@ class ListenService {
                     recorded_from: recordedFrom ? recordedFrom.toISOString() : null,
                     recorded_to: recordedTo.toISOString(),
                     duration_ms: recordedFrom ? (recordedTo - recordedFrom) : null,
-                    session_id: this.currentSessionId || null,
+                    session_id: sessionIdAtClose || null,
                     events: events.map((e) => ({
                         title: e.title,
                         start: e.start,
@@ -611,19 +642,10 @@ class ListenService {
                     })();
                 }
             }
-        } catch (e) {
-            console.warn('[ListenService] transcript copy failed:', e.message);
-        }
-
-        if (this.currentSessionId) {
-            try { await sessionRepository.end(this.currentSessionId); } catch (_) {}
-            this.currentSessionId = null;
-        }
-        try {
-            const { updateActiveListenSessionId } = require('../fire/instance');
-            updateActiveListenSessionId(null);
-        } catch (_) {}
-        return { success: true };
+            } catch (e) {
+                console.warn('[ListenService] transcript copy failed:', e.message);
+            }
+        })();
     }
 
     // Back-compat no-ops for old featureBridge channels that still get wired:

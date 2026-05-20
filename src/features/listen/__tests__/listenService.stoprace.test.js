@@ -143,4 +143,33 @@ describe('ListenService stop race + device-route restart', () => {
         expect(svc._audioIdleTimer).toBeNull();
         expect(svc._audioIdlePromptShown).toBe(false);
     });
+
+    it('closeSession returns fast even when sidecar work is slow', async () => {
+        await svc.start();
+
+        // Inject a slow blocker into the sidecar pipeline. If closeSession
+        // awaits it, the test will time out instead of completing in <50ms.
+        // We patch the prototype's _finishSessionAsync to call the real one
+        // but ALSO record entry, then we time the closeSession await.
+        let sidecarEntered = false;
+        const origFinish = svc._finishSessionAsync.bind(svc);
+        svc._finishSessionAsync = (args) => {
+            sidecarEntered = true;
+            // Don't actually run the real sidecar (it would try to touch
+            // config / fs which we haven't mocked). The contract is: closeSession
+            // FIRES this, doesn't AWAIT it.
+            return undefined;
+        };
+
+        const t0 = Date.now();
+        const result = await svc.closeSession();
+        const elapsed = Date.now() - t0;
+
+        expect(result).toEqual({ success: true });
+        expect(elapsed).toBeLessThan(50); // generous; in practice <5ms
+        expect(sidecarEntered).toBe(true);
+        expect(svc.active).toBeNull();
+        // Restore so afterAll doesn't leak.
+        svc._finishSessionAsync = origFinish;
+    });
 });

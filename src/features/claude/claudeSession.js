@@ -81,7 +81,7 @@ class ClaudeSession {
     const queryFn = await this._getQuery();
     const options = {
       cwd: this.cwd,
-      allowedTools: ['Read', 'Grep', 'Glob', 'Bash', 'WebFetch'],
+      allowedTools: ['Read', 'Grep', 'Glob', 'Bash', 'WebFetch', 'WebSearch'],
       disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
     };
     if (this.model) options.model = this.model;

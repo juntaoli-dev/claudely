@@ -231,18 +231,14 @@ app.whenReady().then(async () => {
             setTimeout(async () => {
                 try {
                     console.log('[autoListen] starting STT pipeline');
-                    // Show the listen window so the user can see transcripts
-                    // flowing. The handleListenRequest('Listen') path does this
-                    // too; autoListen used to skip it, leaving the transcript
-                    // pane hidden until the user manually toggled visibility.
                     const internalBridge = require('./bridge/internalBridge');
                     internalBridge.emit('window:requestVisibility', { name: 'listen', visible: true });
                     await listenService.start();
-                    const { windowPool } = require('./window/windowManager');
-                    const listenWindow = windowPool?.get('listen');
-                    if (listenWindow && !listenWindow.isDestroyed()) {
-                        listenWindow.webContents.send('session-state-changed', { isActive: true });
-                    }
+                    // autoListen bypasses handleListenRequest, so the header's
+                    // changeSessionResult cycle never fires. Push canonical
+                    // state to BOTH UI surfaces so the header reads Stop and
+                    // the listen pane shows the elapsed timer.
+                    listenService.broadcastCanonicalState();
                 } catch (e) {
                     console.warn('[autoListen] failed:', e.message);
                 }

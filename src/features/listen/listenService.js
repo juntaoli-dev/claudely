@@ -365,7 +365,12 @@ class ListenService {
                             this.sendToRenderer('update-status', 'Audio device changed, reattaching…');
                             setImmediate(() => {
                                 if (this.active || this._userStopRequested) return;
-                                this.start().catch((e) => {
+                                this.start().then(() => {
+                                    // Non-click restart bypasses
+                                    // changeSessionResult, so sync the UI
+                                    // canonically.
+                                    this.broadcastCanonicalState();
+                                }).catch((e) => {
                                     console.warn('[ListenService] route-change restart failed:', e.message);
                                     this.sendToRenderer('update-status', `restart failed: ${e.message}`);
                                 });
@@ -398,7 +403,9 @@ class ListenService {
                             if (this.active) return;       // user already restarted
                             if (this._restartGiveUp) return;
                             if (this._userStopRequested) return;
-                            this.start().catch((e) => {
+                            this.start().then(() => {
+                                this.broadcastCanonicalState();
+                            }).catch((e) => {
                                 console.warn('[ListenService] auto-restart failed:', e.message);
                                 this.sendToRenderer('update-status', `restart failed: ${e.message}`);
                                 this.sendToRenderer('session-state-changed', { isActive: false });
@@ -438,7 +445,16 @@ class ListenService {
         } finally {
             this.isInitializing = false;
             this.sendToRenderer('change-listen-capture-state', { status: 'start' });
-            this.broadcastCanonicalState();
+            // NOTE: broadcastCanonicalState() intentionally NOT called here.
+            // The handleListenRequest('Listen') path emits
+            // listen:changeSessionResult to advance the header's UI state
+            // cycle (beforeSession→inSession). Broadcasting canonical state
+            // here would race that cycle and force the header back to
+            // beforeSession before changeSessionResult re-cycled it to
+            // inSession — net effect: Stop click took two presses to land.
+            // Paths that DON'T go through handleListenRequest (autoListen,
+            // capture-exit auto-restart, powerMonitor resume) call
+            // broadcastCanonicalState() themselves.
         }
     }
 
@@ -481,7 +497,11 @@ class ListenService {
             console.warn('[ListenService] stop error:', e.message);
         }
         this.active = null;
-        this.broadcastCanonicalState();
+        // No broadcastCanonicalState() — see same-day note in start().
+        // handleListenRequest('Stop') emits listen:changeSessionResult which
+        // drives the cycle. A reconcile here would race it and require the
+        // user to click Stop twice. Non-click paths (powerMonitor, etc.)
+        // call broadcastCanonicalState themselves.
 
         // End the DB row + clear bookkeeping NOW so the UI's Stop click
         // resolves instantly. The Stop button used to "load" for several

@@ -41,7 +41,7 @@ export class ShortcutSettingsView extends LitElement {
         .shortcut-name{flex:1 1 auto;color:rgba(255,255,255,.9);font-weight:300;
             white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
-        .action-btn{background:none;border:none;color:rgba(0,122,255,.8);
+        .action-btn{background:none;border:none;color:rgba(236, 72, 153,.8);
             font-size:11px;padding:0 4px;cursor:pointer;transition:.15s;}
         .action-btn:hover{color:#0a84ff;text-decoration:underline;}
 
@@ -50,8 +50,8 @@ export class ShortcutSettingsView extends LitElement {
             padding:4px 6px;font:11px 'SF Mono','Menlo',monospace;
             color:white;text-align:right;cursor:text;margin-left:auto;}
         .shortcut-input:focus,.shortcut-input.capturing{
-            outline:none;border-color:rgba(0,122,255,.6);
-            box-shadow:0 0 0 1px rgba(0,122,255,.3);}
+            outline:none;border-color:rgba(236, 72, 153,.6);
+            box-shadow:0 0 0 1px rgba(236, 72, 153,.3);}
 
         .feedback{font-size:10px;margin-top:2px;min-height:12px;}
         .feedback.error{color:#ef4444;}
@@ -62,8 +62,8 @@ export class ShortcutSettingsView extends LitElement {
             border:1px solid rgba(255,255,255,.2);border-radius:4px;
             color:white;padding:5px 10px;font-size:11px;cursor:pointer;transition:.15s;}
         .settings-button:hover{background:rgba(255,255,255,.15);}
-        .settings-button.primary{background:rgba(0,122,255,.25);border-color:rgba(0,122,255,.6);}
-        .settings-button.primary:hover{background:rgba(0,122,255,.35);}
+        .settings-button.primary{background:rgba(236, 72, 153,.25);border-color:rgba(236, 72, 153,.6);}
+        .settings-button.primary:hover{background:rgba(236, 72, 153,.35);}
         .settings-button.danger{background:rgba(255,59,48,.1);border-color:rgba(255,59,48,.3);
             color:rgba(255,59,48,.9);}
         .settings-button.danger:hover{background:rgba(255,59,48,.15);

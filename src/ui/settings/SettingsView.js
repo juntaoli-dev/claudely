@@ -305,9 +305,9 @@ export class SettingsView extends LitElement {
         }
 
         .preset-item.selected {
-            background: rgba(0, 122, 255, 0.25);
-            border-color: rgba(0, 122, 255, 0.6);
-            box-shadow: 0 0 0 1px rgba(0, 122, 255, 0.3);
+            background: rgba(236, 72, 153, 0.25);
+            border-color: rgba(236, 72, 153, 0.6);
+            box-shadow: 0 0 0 1px rgba(236, 72, 153, 0.3);
         }
 
         .preset-name {
@@ -325,7 +325,7 @@ export class SettingsView extends LitElement {
 
         .preset-status {
             font-size: 9px;
-            color: rgba(0, 122, 255, 0.8);
+            color: rgba(236, 72, 153, 0.8);
             font-weight: 500;
             margin-left: 6px;
         }
@@ -339,13 +339,13 @@ export class SettingsView extends LitElement {
         }
 
         .no-presets-message .web-link {
-            color: rgba(0, 122, 255, 0.8);
+            color: rgba(236, 72, 153, 0.8);
             text-decoration: underline;
             cursor: pointer;
         }
 
         .no-presets-message .web-link:hover {
-            color: rgba(0, 122, 255, 1);
+            color: rgba(236, 72, 153, 1);
         }
 
         .loading-state {
@@ -415,7 +415,7 @@ export class SettingsView extends LitElement {
             align-items: center; 
         }
         .model-item:hover { background-color: rgba(255,255,255,0.1); }
-        .model-item.selected { background-color: rgba(0, 122, 255, 0.4); font-weight: 500; }
+        .model-item.selected { background-color: rgba(236, 72, 153, 0.4); font-weight: 500; }
         .model-status { 
             font-size: 9px; 
             color: rgba(255,255,255,0.6); 
@@ -433,7 +433,7 @@ export class SettingsView extends LitElement {
         }
         .install-progress-bar {
             height: 100%;
-            background: rgba(0, 122, 255, 0.8);
+            background: rgba(236, 72, 153, 0.8);
             transition: width 0.3s ease;
         }
         

@@ -170,6 +170,43 @@ export class SettingsView extends LitElement {
             flex: 1;
         }
 
+        /* Theme picker — six round colour swatches, current one ringed. */
+        .theme-picker {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 4px 4px;
+        }
+        .theme-picker-label {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.7);
+            margin-right: auto;
+        }
+        .theme-swatches {
+            display: flex;
+            gap: 5px;
+        }
+        .theme-swatch {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            background: transparent;
+            cursor: pointer;
+            transition: transform 0.1s ease, box-shadow 0.1s ease;
+            padding: 0;
+        }
+        .theme-swatch:hover { transform: scale(1.15); }
+        .theme-swatch.active {
+            box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 0 6px rgba(255, 255, 255, 0.35);
+        }
+        .theme-swatch.theme-default { background: #007aff; }
+        .theme-swatch.theme-pink    { background: #ec4899; }
+        .theme-swatch.theme-mint    { background: #10b981; }
+        .theme-swatch.theme-amber   { background: #f59e0b; }
+        .theme-swatch.theme-purple  { background: #a855f7; }
+        .theme-swatch.theme-red     { background: #ef4444; }
+
         .settings-button {
             background: rgba(255, 255, 255, 0.1);
             border: 1px solid rgba(255, 255, 255, 0.2);
@@ -305,9 +342,9 @@ export class SettingsView extends LitElement {
         }
 
         .preset-item.selected {
-            background: rgba(236, 72, 153, 0.25);
-            border-color: rgba(236, 72, 153, 0.6);
-            box-shadow: 0 0 0 1px rgba(236, 72, 153, 0.3);
+            background: rgba(var(--accent-rgb, 236, 72, 153), 0.25);
+            border-color: rgba(var(--accent-rgb, 236, 72, 153), 0.6);
+            box-shadow: 0 0 0 1px rgba(var(--accent-rgb, 236, 72, 153), 0.3);
         }
 
         .preset-name {
@@ -325,7 +362,7 @@ export class SettingsView extends LitElement {
 
         .preset-status {
             font-size: 9px;
-            color: rgba(236, 72, 153, 0.8);
+            color: rgba(var(--accent-rgb, 236, 72, 153), 0.8);
             font-weight: 500;
             margin-left: 6px;
         }
@@ -339,13 +376,13 @@ export class SettingsView extends LitElement {
         }
 
         .no-presets-message .web-link {
-            color: rgba(236, 72, 153, 0.8);
+            color: rgba(var(--accent-rgb, 236, 72, 153), 0.8);
             text-decoration: underline;
             cursor: pointer;
         }
 
         .no-presets-message .web-link:hover {
-            color: rgba(236, 72, 153, 1);
+            color: rgba(var(--accent-rgb, 236, 72, 153), 1);
         }
 
         .loading-state {
@@ -415,7 +452,7 @@ export class SettingsView extends LitElement {
             align-items: center; 
         }
         .model-item:hover { background-color: rgba(255,255,255,0.1); }
-        .model-item.selected { background-color: rgba(236, 72, 153, 0.4); font-weight: 500; }
+        .model-item.selected { background-color: rgba(var(--accent-rgb, 236, 72, 153), 0.4); font-weight: 500; }
         .model-status { 
             font-size: 9px; 
             color: rgba(255,255,255,0.6); 
@@ -433,7 +470,7 @@ export class SettingsView extends LitElement {
         }
         .install-progress-bar {
             height: 100%;
-            background: rgba(236, 72, 153, 0.8);
+            background: rgba(var(--accent-rgb, 236, 72, 153), 0.8);
             transition: width 0.3s ease;
         }
         
@@ -505,6 +542,9 @@ export class SettingsView extends LitElement {
         installingModels: { type: Object, state: true },
         // Whisper related properties
         whisperModels: { type: Array, state: true },
+        // Theme picker
+        themes: { type: Array, state: true },
+        currentTheme: { type: String, state: true },
     };
     //////// after_modelStateService ////////
 
@@ -913,13 +953,34 @@ export class SettingsView extends LitElement {
 
     connectedCallback() {
         super.connectedCallback();
-        
+
         this.setupEventListeners();
         this.setupIpcListeners();
         this.setupWindowResize();
         this.loadAutoUpdateSetting();
+        this.loadThemes();
         // Force one height calculation immediately (innerHeight may be 0 at first)
         setTimeout(() => this.updateScrollHeight(), 0);
+    }
+
+    async loadThemes() {
+        try {
+            this.themes = (await window.api?.theme?.list?.()) || [];
+            this.currentTheme = (await window.api?.theme?.get?.()) || 'pink';
+        } catch (e) {
+            console.warn('[SettingsView] failed to load themes', e);
+            this.themes = [];
+            this.currentTheme = 'pink';
+        }
+    }
+
+    async handleThemePick(name) {
+        try {
+            await window.api?.theme?.set?.(name);
+            this.currentTheme = name;
+        } catch (e) {
+            console.warn('[SettingsView] theme set failed', e);
+        }
     }
 
     disconnectedCallback() {
@@ -1417,6 +1478,18 @@ export class SettingsView extends LitElement {
                 </div>
 
                 <div class="buttons-section">
+                    <div class="theme-picker">
+                        <span class="theme-picker-label">Theme</span>
+                        <div class="theme-swatches">
+                            ${(this.themes || []).map((name) => html`
+                                <button
+                                    class="theme-swatch theme-${name} ${this.currentTheme === name ? 'active' : ''}"
+                                    title="${name}"
+                                    @click=${() => this.handleThemePick(name)}
+                                ></button>
+                            `)}
+                        </div>
+                    </div>
                     <button class="settings-button full-width" @click=${this.handlePersonalize}>
                         <span>Personalize / Meeting Notes</span>
                     </button>

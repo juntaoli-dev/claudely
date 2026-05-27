@@ -69,7 +69,12 @@ export class MainHeader extends LitElement {
             top: 0; left: 0; right: 0; bottom: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.6);
+            background:
+                linear-gradient(
+                    180deg,
+                    rgba(var(--accent-rgb, 236, 72, 153), 0.18) 0%,
+                    rgba(0, 0, 0, 0.7) 100%
+                );
             border-radius: 9000px;
             z-index: -1;
         }
@@ -79,8 +84,13 @@ export class MainHeader extends LitElement {
             position: absolute;
             top: 0; left: 0; right: 0; bottom: 0;
             border-radius: 9000px;
-            padding: 1px;
-            background: linear-gradient(169deg, rgba(255, 255, 255, 0.17) 0%, rgba(255, 255, 255, 0.08) 50%, rgba(255, 255, 255, 0.17) 100%); 
+            padding: 1.5px;
+            background: linear-gradient(
+                169deg,
+                rgba(var(--accent-rgb, 236, 72, 153), 0.55) 0%,
+                rgba(255, 255, 255, 0.12) 50%,
+                rgba(var(--accent-rgb, 236, 72, 153), 0.55) 100%
+            );
             -webkit-mask:
                 linear-gradient(#fff 0 0) content-box,
                 linear-gradient(#fff 0 0);

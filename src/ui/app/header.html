@@ -4,6 +4,39 @@
         <meta http-equiv="content-security-policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval'" />
         <title>Pickle Claudely Header</title>
         <style>
+            /* Theme palette. Components reference --accent and --accent-rgb;
+               flipping the data-theme attribute on <html> retints the whole
+               app live. */
+            :root[data-theme="default"] {
+                --accent: #007aff;
+                --accent-rgb: 0, 122, 255;
+                --accent-hover: #0056b3;
+            }
+            :root[data-theme="pink"] {
+                --accent: #ec4899;
+                --accent-rgb: 236, 72, 153;
+                --accent-hover: #be185d;
+            }
+            :root[data-theme="mint"] {
+                --accent: #10b981;
+                --accent-rgb: 16, 185, 129;
+                --accent-hover: #047857;
+            }
+            :root[data-theme="amber"] {
+                --accent: #f59e0b;
+                --accent-rgb: 245, 158, 11;
+                --accent-hover: #b45309;
+            }
+            :root[data-theme="purple"] {
+                --accent: #a855f7;
+                --accent-rgb: 168, 85, 247;
+                --accent-hover: #7e22ce;
+            }
+            :root[data-theme="red"] {
+                --accent: #ef4444;
+                --accent-rgb: 239, 68, 68;
+                --accent-hover: #b91c1c;
+            }
             html,
             body {
                 margin: 0;
@@ -23,6 +56,20 @@
             if (params.get('glass') === 'true') {
                 document.body.classList.add('has-glass');
             }
+            // Apply persisted theme as early as possible to avoid a flash of
+            // the wrong palette while the Lit bundle loads.
+            (async () => {
+                try {
+                    const t = await window.api?.theme?.get?.();
+                    document.documentElement.dataset.theme = t || 'pink';
+                } catch {
+                    document.documentElement.dataset.theme = 'pink';
+                }
+            })();
+            // Live re-theming when the user picks a different one in Settings.
+            window.api?.theme?.onChanged?.((event, name) => {
+                document.documentElement.dataset.theme = name || 'pink';
+            });
         </script>
     </body>
 </html>

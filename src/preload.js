@@ -312,5 +312,17 @@ contextBridge.exposeInMainWorld('api', {
     // Listeners
     onChangeListenCaptureState: (callback) => ipcRenderer.on('change-listen-capture-state', callback),
     removeOnChangeListenCaptureState: (callback) => ipcRenderer.removeListener('change-listen-capture-state', callback)
-  }
+  },
+
+  // UI theme (accent palette). Driven by ~/.claudely/config.json `theme`.
+  // Bootstrap reads via theme.get(); the SettingsView picker writes via
+  // theme.set() which broadcasts theme:changed to every window for live
+  // re-tinting without a relaunch.
+  theme: {
+    get: () => ipcRenderer.invoke('theme:get'),
+    set: (name) => ipcRenderer.invoke('theme:set', name),
+    list: () => ipcRenderer.invoke('theme:list'),
+    onChanged: (callback) => ipcRenderer.on('theme:changed', callback),
+    removeOnChanged: (callback) => ipcRenderer.removeListener('theme:changed', callback),
+  },
 });

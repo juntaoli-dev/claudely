@@ -195,7 +195,7 @@ export class ApiKeyHeader extends LitElement {
             transition: background-color 0.2s ease;
         }
         .ollama-action-button.install {
-            background: rgba(236, 72, 153, 0.2);
+            background: rgba(var(--accent-rgb, 236, 72, 153), 0.2);
         }
         .ollama-action-button.start {
             background: rgba(255, 200, 0, 0.2);
@@ -1803,7 +1803,7 @@ export class ApiKeyHeader extends LitElement {
         return html`
             <div style="margin-top: 3px; display: flex; align-items: center; gap: 6px;">
                 <div style="height: 1px; background: rgba(255,255,255,0.3); border-radius: 0.5px; overflow: hidden; flex: 1;">
-                    <div style="height: 100%; background: rgba(236, 72, 153,1); width: ${this.installProgress}%; transition: width 0.1s ease;"></div>
+                    <div style="height: 100%; background: rgba(var(--accent-rgb, 236, 72, 153), 1); width: ${this.installProgress}%; transition: width 0.1s ease;"></div>
                 </div>
                 <div style="font-size: 8px; color: rgba(255,255,255,0.8); font-weight: 600; min-width: 24px; text-align: right;">
                     ${this.installProgress}%
@@ -1851,7 +1851,7 @@ export class ApiKeyHeader extends LitElement {
                       <div style="margin-top: 3px; display: flex; align-items: center; gap: 6px;">
                           <div style="height: 1px; background: rgba(255,255,255,0.3); border-radius: 0.5px; overflow: hidden; flex: 1;">
                               <div
-                                  style="height: 100%; background: rgba(236, 72, 153,1); width: ${this.installProgress}%; transition: width 0.1s ease;"
+                                  style="height: 100%; background: rgba(var(--accent-rgb, 236, 72, 153), 1); width: ${this.installProgress}%; transition: width 0.1s ease;"
                               ></div>
                           </div>
                           <div style="font-size: 8px; color: rgba(255,255,255,0.8); font-weight: 600; min-width: 24px; text-align: right;">
@@ -1885,7 +1885,7 @@ export class ApiKeyHeader extends LitElement {
         return html`
             <div style="margin-top: 3px; display: flex; align-items: center; gap: 6px;">
                 <div style="height: 1px; background: rgba(255,255,255,0.3); border-radius: 0.5px; overflow: hidden; flex: 1;">
-                    <div style="height: 100%; background: rgba(236, 72, 153,1); width: ${state.progress}%; transition: width 0.1s ease;"></div>
+                    <div style="height: 100%; background: rgba(var(--accent-rgb, 236, 72, 153), 1); width: ${state.progress}%; transition: width 0.1s ease;"></div>
                 </div>
                 <div style="font-size: 8px; color: rgba(255,255,255,0.8); font-weight: 600; min-width: 24px; text-align: right;">
                     ${state.progress}%

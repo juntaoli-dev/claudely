@@ -101,6 +101,22 @@ module.exports = {
       }
     });
 
+    // Theme — accent palette persisted in ~/.claudely/config.json. theme:set
+    // writes to config and broadcasts theme:changed to every window so the
+    // renderer-side bootstrap script can swap data-theme live, no reload.
+    const themeService = require('../features/common/services/themeService');
+    ipcMain.handle('theme:get', async () => themeService.getCurrent());
+    ipcMain.handle('theme:list', async () => themeService.list());
+    ipcMain.handle('theme:set', async (e, name) => {
+      const result = themeService.set(name);
+      BrowserWindow.getAllWindows().forEach((win) => {
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('theme:changed', result.name);
+        }
+      });
+      return result;
+    });
+
     // ModelStateService
     ipcMain.handle('model:validate-key', async (e, { provider, key }) => await modelStateService.handleValidateKey(provider, key));
     ipcMain.handle('model:get-all-keys', async () => await modelStateService.getAllApiKeys());

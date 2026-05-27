@@ -17,8 +17,11 @@
                 --hover-background: rgba(255, 255, 255, 0.1);
                 --input-background: rgba(0, 0, 0, 0.3);
                 --placeholder-color: rgba(255, 255, 255, 0.4);
-                --focus-border-color: #ec4899;
-                --focus-box-shadow: rgba(236, 72, 153, 0.2);
+                --accent: #ec4899;
+                --accent-rgb: 236, 72, 153;
+                --accent-hover: #be185d;
+                --focus-border-color: var(--accent);
+                --focus-box-shadow: rgba(var(--accent-rgb), 0.2);
                 --input-focus-background: rgba(0, 0, 0, 0.5);
                 --scrollbar-track: rgba(0, 0, 0, 0.2);
                 --scrollbar-thumb: rgba(255, 255, 255, 0.2);
@@ -28,7 +31,7 @@
                 --option-label-color: rgba(255, 255, 255, 0.8);
                 --screen-option-background: rgba(0, 0, 0, 0.4);
                 --screen-option-hover-background: rgba(0, 0, 0, 0.6);
-                --screen-option-selected-background: rgba(236, 72, 153, 0.15);
+                --screen-option-selected-background: rgba(var(--accent-rgb), 0.15);
                 --screen-option-text: rgba(255, 255, 255, 0.7);
                 --description-color: rgba(255, 255, 255, 0.6);
                 --start-button-background: white;
@@ -36,9 +39,9 @@
                 --start-button-border: white;
                 --start-button-hover-background: rgba(255, 255, 255, 0.8);
                 --start-button-hover-border: rgba(0, 0, 0, 0.2);
-                --text-input-button-background: #ec4899;
-                --text-input-button-hover: #be185d;
-                --link-color: #ec4899;
+                --text-input-button-background: var(--accent);
+                --text-input-button-hover: var(--accent-hover);
+                --link-color: var(--accent);
                 --key-background: rgba(255, 255, 255, 0.1);
                 --scrollbar-background: rgba(0, 0, 0, 0.4);
 
@@ -54,6 +57,39 @@
                 --icon-size: 24px;
                 --border-radius: 7px;
                 --content-border-radius: 7px;
+            }
+
+            /* Theme palette overrides. content.html's :root defines a pink
+               default; per-theme blocks below override --accent et al. */
+            :root[data-theme="default"] {
+                --accent: #007aff;
+                --accent-rgb: 0, 122, 255;
+                --accent-hover: #0056b3;
+            }
+            :root[data-theme="pink"] {
+                --accent: #ec4899;
+                --accent-rgb: 236, 72, 153;
+                --accent-hover: #be185d;
+            }
+            :root[data-theme="mint"] {
+                --accent: #10b981;
+                --accent-rgb: 16, 185, 129;
+                --accent-hover: #047857;
+            }
+            :root[data-theme="amber"] {
+                --accent: #f59e0b;
+                --accent-rgb: 245, 158, 11;
+                --accent-hover: #b45309;
+            }
+            :root[data-theme="purple"] {
+                --accent: #a855f7;
+                --accent-rgb: 168, 85, 247;
+                --accent-hover: #7e22ce;
+            }
+            :root[data-theme="red"] {
+                --accent: #ef4444;
+                --accent-rgb: 239, 68, 68;
+                --accent-hover: #b91c1c;
             }
 
             /* Compact layout styles */
@@ -118,6 +154,18 @@
             if (params.get('glass') === 'true') {
                 document.body.classList.add('has-glass');
             }
+            // Persisted theme. Set early to avoid a flash of wrong palette.
+            (async () => {
+                try {
+                    const t = await window.api?.theme?.get?.();
+                    document.documentElement.dataset.theme = t || 'pink';
+                } catch {
+                    document.documentElement.dataset.theme = 'pink';
+                }
+            })();
+            window.api?.theme?.onChanged?.((event, name) => {
+                document.documentElement.dataset.theme = name || 'pink';
+            });
         </script>
     </body>
 </html>

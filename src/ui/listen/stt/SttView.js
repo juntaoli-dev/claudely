@@ -60,7 +60,7 @@ export class SttView extends LitElement {
         }
 
         .stt-message.me {
-            background: rgba(236, 72, 153, 0.8);
+            background: rgba(var(--accent-rgb, 236, 72, 153), 0.8);
             color: white;
             align-self: flex-end;
             border-bottom-right-radius: 4px;

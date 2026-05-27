@@ -38,6 +38,12 @@ class Config {
             // ~/.claudely/config.json to opt back in to Cluely-style
             // always-on behaviour.
             autoListen: false,
+
+            // UI theme. One of: default, pink, mint, amber, purple, red.
+            // See src/features/common/services/themeService.js + the
+            // :root[data-theme="..."] blocks in the renderer HTML.
+            theme: 'pink',
+
             autoAnswer: false,
             wakePhrases: ['hey claude', 'hey claudely'],
             projectCwd: path.join(os.homedir(), 'Documents/creative_studio_repo'),

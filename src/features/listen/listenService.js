@@ -445,16 +445,10 @@ class ListenService {
         } finally {
             this.isInitializing = false;
             this.sendToRenderer('change-listen-capture-state', { status: 'start' });
-            // NOTE: broadcastCanonicalState() intentionally NOT called here.
-            // The handleListenRequest('Listen') path emits
-            // listen:changeSessionResult to advance the header's UI state
-            // cycle (beforeSession→inSession). Broadcasting canonical state
-            // here would race that cycle and force the header back to
-            // beforeSession before changeSessionResult re-cycled it to
-            // inSession — net effect: Stop click took two presses to land.
-            // Paths that DON'T go through handleListenRequest (autoListen,
-            // capture-exit auto-restart, powerMonitor resume) call
-            // broadcastCanonicalState() themselves.
+            // Single source of truth for the header button. The renderer
+            // dropped the cycle-based state machine, so broadcasting
+            // canonical state here is now safe and required.
+            this.broadcastCanonicalState();
         }
     }
 
@@ -497,11 +491,11 @@ class ListenService {
             console.warn('[ListenService] stop error:', e.message);
         }
         this.active = null;
-        // No broadcastCanonicalState() — see same-day note in start().
-        // handleListenRequest('Stop') emits listen:changeSessionResult which
-        // drives the cycle. A reconcile here would race it and require the
-        // user to click Stop twice. Non-click paths (powerMonitor, etc.)
-        // call broadcastCanonicalState themselves.
+        // Canonical broadcast — renderer is now race-free without the
+        // legacy cycle, so always sync. Critical for non-click paths like
+        // the idle-prompt-pause action where the header has no other way
+        // to learn that the backend just stopped.
+        this.broadcastCanonicalState();
 
         // End the DB row + clear bookkeeping NOW so the UI's Stop click
         // resolves instantly. The Stop button used to "load" for several

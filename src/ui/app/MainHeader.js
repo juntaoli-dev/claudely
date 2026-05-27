@@ -5,6 +5,15 @@ export class MainHeader extends LitElement {
         isTogglingSession: { type: Boolean, state: true },
         shortcuts: { type: Object, state: true },
         listenSessionStatus: { type: String, state: true },
+        // Canonical "is the backend running STT right now" — driven only by
+        // listen:stateReconcile broadcasts. Single source of truth.
+        backendActive: { type: Boolean, state: true },
+        // UI-only flag: set when the user clicked Stop while a session was
+        // active, so the button can show "Done" between Stop and the next
+        // click (giving them a chance to read the transcript pane before
+        // dismissing it). Cleared on the next click or when backend goes
+        // inactive without a user Stop (idle-prompt pause, capture give-up).
+        userJustStopped: { type: Boolean, state: true },
     };
 
     static styles = css`
@@ -349,6 +358,8 @@ export class MainHeader extends LitElement {
         this.settingsHideTimer = null;
         this.isTogglingSession = false;
         this.listenSessionStatus = 'beforeSession';
+        this.backendActive = false;
+        this.userJustStopped = false;
         this.animationEndTimer = null;
         this.handleAnimationEnd = this.handleAnimationEnd.bind(this);
         this.handleMouseMove = this.handleMouseMove.bind(this);
@@ -357,13 +368,13 @@ export class MainHeader extends LitElement {
         this.wasJustDragged = false;
     }
 
-    _getListenButtonText(status) {
-        switch (status) {
-            case 'beforeSession': return 'Listen';
-            case 'inSession'   : return 'Stop';
-            case 'afterSession': return 'Done';
-            default            : return 'Listen';
-        }
+    _getListenButtonText(_status) {
+        // Derived from canonical backendActive + UI-only userJustStopped.
+        // _status arg is the legacy listenSessionStatus, kept for callers
+        // that haven't been updated but ignored here.
+        if (this.backendActive) return 'Stop';
+        if (this.userJustStopped) return 'Done';
+        return 'Listen';
     }
 
     async handleMouseDown(e) {
@@ -473,16 +484,12 @@ export class MainHeader extends LitElement {
 
         if (window.api) {
 
-            this._sessionStateTextListener = (event, { success }) => {
-                if (success) {
-                    this.listenSessionStatus = ({
-                        beforeSession: 'inSession',
-                        inSession: 'afterSession',
-                        afterSession: 'beforeSession',
-                    })[this.listenSessionStatus] || 'beforeSession';
-                } else {
-                    this.listenSessionStatus = 'beforeSession';
-                }
+            // changeSessionResult now ONLY clears the toggle spinner. The
+            // button text is derived from backendActive + userJustStopped,
+            // both updated elsewhere (reconcile listener + click handler).
+            // Old cycle (beforeSession→inSession→afterSession) was racing
+            // the canonical broadcast and forcing two clicks to stop.
+            this._sessionStateTextListener = (event, _payload) => {
                 this.isTogglingSession = false;
                 if (this._toggleTimeoutId) {
                     clearTimeout(this._toggleTimeoutId);
@@ -491,12 +498,22 @@ export class MainHeader extends LitElement {
             };
             window.api.mainHeader.onListenChangeSessionResult(this._sessionStateTextListener);
 
-            // Main broadcasts canonical state on system resume so a renderer
-            // that missed IPC during suspend can snap back to truth.
             if (window.api.mainHeader.onListenStateReconcile) {
                 this._stateReconcileListener = (event, state) => {
                     console.log('[MainHeader] state reconcile from main:', state);
-                    this.listenSessionStatus = state?.isActive ? 'inSession' : 'beforeSession';
+                    const wasActive = this.backendActive;
+                    this.backendActive = !!state?.isActive;
+                    // Backend stopped without a user Stop click (idle prompt,
+                    // capture give-up, suspend). Clear the "Done" affordance
+                    // so the button goes straight back to "Listen".
+                    if (wasActive && !this.backendActive && !this.userJustStopped) {
+                        // already false, but explicit:
+                        this.userJustStopped = false;
+                    }
+                    // Backend went active — clear any stale Done state.
+                    if (this.backendActive) {
+                        this.userJustStopped = false;
+                    }
                     this.isTogglingSession = false;
                     if (this._toggleTimeoutId) {
                         clearTimeout(this._toggleTimeoutId);
@@ -566,6 +583,21 @@ export class MainHeader extends LitElement {
 
         this.isTogglingSession = true;
 
+        // Decide the action BEFORE updating optimistic state so the IPC
+        // payload reflects what the user actually saw on the button.
+        let action;
+        if (this.backendActive) {
+            action = 'Stop';
+            // Optimistic: stay on "Done" between Stop and the next click
+            // even before the canonical broadcast confirms backendActive.
+            this.userJustStopped = true;
+        } else if (this.userJustStopped) {
+            action = 'Done';
+            this.userJustStopped = false;
+        } else {
+            action = 'Listen';
+        }
+
         // Safety: lid-close mid-toggle can suspend the renderer and drop the
         // listen:changeSessionResult IPC, leaving the button stuck on the
         // "stopping…" ellipsis. If no result arrives in 8s, force-clear the
@@ -578,7 +610,7 @@ export class MainHeader extends LitElement {
             try {
                 if (window.api?.mainHeader?.getListenState) {
                     const s = await window.api.mainHeader.getListenState();
-                    this.listenSessionStatus = s?.isActive ? 'inSession' : 'beforeSession';
+                    this.backendActive = !!s?.isActive;
                 }
             } catch (e) {
                 console.warn('[MainHeader] reconcile failed:', e);
@@ -586,9 +618,8 @@ export class MainHeader extends LitElement {
         }, 8000);
 
         try {
-            const listenButtonText = this._getListenButtonText(this.listenSessionStatus);
             if (window.api) {
-                await window.api.mainHeader.sendListenButtonClick(listenButtonText);
+                await window.api.mainHeader.sendListenButtonClick(action);
             }
         } catch (error) {
             console.error('IPC invoke for session change failed:', error);

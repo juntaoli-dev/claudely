@@ -16,15 +16,25 @@ export class SettingsView extends LitElement {
             color: white;
         }
 
+        /* Liquid-glass — accent-tinted gradient + heavy backdrop blur. */
         .settings-container {
             display: flex;
             flex-direction: column;
             height: 100%;
             width: 100%;
-            background: rgba(20, 20, 20, 0.8);
-            border-radius: 12px;
-            outline: 0.5px rgba(255, 255, 255, 0.2) solid;
-            outline-offset: -1px;
+            background:
+                linear-gradient(
+                    180deg,
+                    rgba(var(--accent-rgb, 236, 72, 153), 0.14) 0%,
+                    rgba(20, 20, 24, 0.55) 70%
+                );
+            backdrop-filter: blur(42px) saturate(180%);
+            -webkit-backdrop-filter: blur(42px) saturate(180%);
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            box-shadow:
+                0 12px 40px rgba(0, 0, 0, 0.45),
+                inset 0 1px 0 rgba(255, 255, 255, 0.18);
             box-sizing: border-box;
             position: relative;
             overflow-y: auto;

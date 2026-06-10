@@ -87,7 +87,7 @@ export class MainHeader extends LitElement {
             background: transparent;
             border-radius: 9000px;
             justify-content: center;
-            width: 78px;
+            min-width: 82px;
             align-items: center;
             gap: 6px;
             display: flex;
@@ -102,11 +102,11 @@ export class MainHeader extends LitElement {
         }
 
         .listen-button.active::before {
-            background: rgba(215, 0, 0, 0.5);
+            background: rgba(220, 38, 38, 0.72);
         }
 
         .listen-button.active:hover::before {
-            background: rgba(255, 20, 20, 0.6);
+            background: rgba(239, 68, 68, 0.82);
         }
 
         .listen-button.done {
@@ -135,7 +135,7 @@ export class MainHeader extends LitElement {
             content: '';
             position: absolute;
             top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(255, 255, 255, 0.14);
+            background: rgba(15, 23, 42, 0.92);
             border-radius: 9000px;
             z-index: -1;
             transition: background 0.15s ease;
@@ -194,15 +194,17 @@ export class MainHeader extends LitElement {
             box-sizing: border-box;
             justify-content: flex-start;
             align-items: center;
-            gap: 9px;
+            gap: 7px;
             display: flex;
-            padding: 0 8px;
-            border-radius: 6px;
+            padding: 0 10px;
+            border-radius: 9000px;
             transition: background 0.15s ease;
+            background: rgba(37, 99, 235, 0.9);
+            border: 1px solid rgba(147, 197, 253, 0.35);
         }
 
         .header-actions:hover {
-            background: rgba(255, 255, 255, 0.1);
+            background: rgba(59, 130, 246, 0.98);
         }
 
         .ask-action {
@@ -562,19 +564,6 @@ export class MainHeader extends LitElement {
         }
     }
 
-    async _handleToggleAllWindowsVisibility() {
-        if (this.wasJustDragged) return;
-
-        try {
-            if (window.api) {
-                await window.api.mainHeader.sendToggleAllWindowsVisibility();
-            }
-        } catch (error) {
-            console.error('IPC invoke for all windows visibility button failed:', error);
-        }
-    }
-
-
     renderShortcut(accelerator) {
         if (!accelerator) return html``;
 
@@ -648,15 +637,6 @@ export class MainHeader extends LitElement {
                     </div>
                     <div class="icon-container">
                         ${this.renderShortcut(this.shortcuts.nextStep)}
-                    </div>
-                </div>
-
-                <div class="header-actions" @click=${() => this._handleToggleAllWindowsVisibility()}>
-                    <div class="action-text">
-                        <div class="action-text-content">Show/Hide</div>
-                    </div>
-                    <div class="icon-container">
-                        ${this.renderShortcut(this.shortcuts.toggleVisibility)}
                     </div>
                 </div>
 

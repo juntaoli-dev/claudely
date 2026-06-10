@@ -1,7 +1,7 @@
 // factory.js
 
 function createAIProvider() {
-    throw new Error('Claude Agent SDK provider wired in Phase 1');
+    throw new Error('Local CLI assistant provider is wired through AssistantSession');
 }
 
 module.exports = { createAIProvider };

@@ -378,6 +378,97 @@ export class SettingsView extends LitElement {
             flex-direction: column;
             gap: 10px;
         }
+        .context-section {
+            padding: 8px 0;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }
+        .context-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
+        }
+        .context-title {
+            color: white;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .context-label {
+            max-width: 104px;
+            color: rgba(125, 211, 252, 0.95);
+            font-size: 10px;
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .context-path {
+            color: rgba(226, 232, 240, 0.72);
+            font-size: 10px;
+            line-height: 1.35;
+            overflow-wrap: anywhere;
+            user-select: text;
+            cursor: text;
+        }
+        .context-input {
+            width: 100%;
+            background: rgba(0,0,0,0.24);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: white;
+            border-radius: 4px;
+            padding: 5px 7px;
+            font-size: 10px;
+            box-sizing: border-box;
+            cursor: text;
+            user-select: text;
+        }
+        .context-input:focus {
+            outline: none;
+            border-color: rgba(125, 211, 252, 0.65);
+            background: rgba(8, 47, 73, 0.42);
+        }
+        .context-buttons {
+            display: flex;
+            gap: 4px;
+        }
+        .context-buttons .settings-button {
+            flex: 1;
+            padding: 4px 6px;
+        }
+        .context-recent {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+        .context-recent-item {
+            width: 100%;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 4px;
+            color: rgba(255, 255, 255, 0.82);
+            font-size: 10px;
+            padding: 4px 6px;
+            text-align: left;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+        .context-recent-item:hover {
+            background: rgba(255, 255, 255, 0.11);
+        }
+        .context-status {
+            min-height: 12px;
+            color: rgba(186, 230, 253, 0.85);
+            font-size: 10px;
+            line-height: 1.3;
+        }
+        .context-status.error {
+            color: rgba(252, 165, 165, 0.95);
+        }
         .provider-key-group, .model-select-group {
             display: flex;
             flex-direction: column;
@@ -499,6 +590,12 @@ export class SettingsView extends LitElement {
         showPresets: { type: Boolean, state: true },
         autoUpdateEnabled: { type: Boolean, state: true },
         autoUpdateLoading: { type: Boolean, state: true },
+        codeContext: { type: Object, state: true },
+        recentCodeContexts: { type: Array, state: true },
+        codeContextInput: { type: String, state: true },
+        codeContextStatus: { type: String, state: true },
+        codeContextError: { type: Boolean, state: true },
+        codeContextSaving: { type: Boolean, state: true },
         // Ollama related properties
         ollamaStatus: { type: Object, state: true },
         ollamaModels: { type: Array, state: true },
@@ -537,6 +634,12 @@ export class SettingsView extends LitElement {
         this.handleUsePicklesKey = this.handleUsePicklesKey.bind(this)
         this.autoUpdateEnabled = true;
         this.autoUpdateLoading = true;
+        this.codeContext = null;
+        this.recentCodeContexts = [];
+        this.codeContextInput = '';
+        this.codeContextStatus = '';
+        this.codeContextError = false;
+        this.codeContextSaving = false;
         this.loadInitialData();
         //////// after_modelStateService ////////
     }
@@ -613,12 +716,13 @@ export class SettingsView extends LitElement {
         this.isLoading = true;
         try {
             // Load essential data first
-            const [userState, modelSettings, presets, contentProtection, shortcuts] = await Promise.all([
+            const [userState, modelSettings, presets, contentProtection, shortcuts, codeContextResult] = await Promise.all([
                 window.api.settingsView.getCurrentUser(),
                 window.api.settingsView.getModelSettings(), // Facade call
                 window.api.settingsView.getPresets(),
                 window.api.settingsView.getContentProtectionStatus(),
-                window.api.settingsView.getCurrentShortcuts()
+                window.api.settingsView.getCurrentShortcuts(),
+                window.api.settingsView.getCodeContext()
             ]);
             
             if (userState && userState.isLoggedIn) this.firebaseUser = userState;
@@ -636,6 +740,9 @@ export class SettingsView extends LitElement {
             this.presets = presets || [];
             this.isContentProtectionOn = contentProtection;
             this.shortcuts = shortcuts || {};
+            if (codeContextResult?.success) {
+                this.applyCodeContextState(codeContextResult.data);
+            }
             if (this.presets.length > 0) {
                 const firstUserPreset = this.presets.find(p => p.is_default === 0);
                 if (firstUserPreset) this.selectedPreset = firstUserPreset;
@@ -990,11 +1097,19 @@ export class SettingsView extends LitElement {
             console.log('[SettingsView] Received updated shortcuts:', keybinds);
             this.shortcuts = keybinds;
         };
+        this._codeContextListener = (event, payload) => {
+            console.log('[SettingsView] Received ai-context-updated:', payload?.active?.cwd);
+            this.applyCodeContextState(payload);
+            this.codeContextStatus = payload?.changed ? 'Context switched. Next answer will use a fresh AI session.' : 'Context already active.';
+            this.codeContextError = false;
+            this.requestUpdate();
+        };
         
         window.api.settingsView.onUserStateChanged(this._userStateListener);
         window.api.settingsView.onSettingsUpdated(this._settingsUpdatedListener);
         window.api.settingsView.onPresetsUpdated(this._presetsUpdatedListener);
         window.api.settingsView.onShortcutsUpdated(this._shortcutListener);
+        window.api.settingsView.onCodeContextUpdate?.(this._codeContextListener);
     }
 
     cleanupIpcListeners() {
@@ -1011,6 +1126,9 @@ export class SettingsView extends LitElement {
         }
         if (this._shortcutListener) {
             window.api.settingsView.removeOnShortcutsUpdated(this._shortcutListener);
+        }
+        if (this._codeContextListener) {
+            window.api.settingsView.removeOnCodeContextUpdate?.(this._codeContextListener);
         }
     }
 
@@ -1092,6 +1210,81 @@ export class SettingsView extends LitElement {
         this.selectedPreset = preset;
         // Here you could implement preset application logic
         console.log('Selected preset:', preset);
+    }
+
+    applyCodeContextState(data) {
+        const active = data?.active || data?.data?.active || null;
+        const recent = data?.recent || data?.data?.recent || [];
+        if (active) {
+            this.codeContext = active;
+            this.codeContextInput = active.cwd || '';
+        }
+        this.recentCodeContexts = Array.isArray(recent) ? recent : [];
+    }
+
+    handleCodeContextInput = (event) => {
+        this.codeContextInput = event.target.value;
+        this.codeContextStatus = '';
+        this.codeContextError = false;
+    };
+
+    async handleSaveCodeContext() {
+        if (!window.api || this.codeContextSaving) return;
+        this.codeContextSaving = true;
+        this.codeContextStatus = 'Switching context...';
+        this.codeContextError = false;
+        this.requestUpdate();
+        try {
+            const result = await window.api.settingsView.setCodeContext(this.codeContextInput);
+            if (result?.success) {
+                this.applyCodeContextState(result.data);
+                this.codeContextStatus = result.data?.changed
+                    ? 'Context switched. Next answer will use a fresh AI session.'
+                    : 'Context already active.';
+                this.codeContextError = false;
+            } else {
+                this.codeContextStatus = result?.error || 'Could not switch context.';
+                this.codeContextError = true;
+            }
+        } catch (error) {
+            this.codeContextStatus = error.message || 'Could not switch context.';
+            this.codeContextError = true;
+        }
+        this.codeContextSaving = false;
+        this.requestUpdate();
+    }
+
+    async handleChooseCodeContext() {
+        if (!window.api || this.codeContextSaving) return;
+        this.codeContextSaving = true;
+        this.codeContextStatus = 'Opening folder picker...';
+        this.codeContextError = false;
+        this.requestUpdate();
+        try {
+            const result = await window.api.settingsView.chooseCodeContextFolder();
+            if (result?.success) {
+                this.applyCodeContextState(result.data);
+                this.codeContextStatus = result.data?.changed
+                    ? 'Context switched. Next answer will use a fresh AI session.'
+                    : 'Context already active.';
+            } else if (result?.canceled) {
+                this.codeContextStatus = '';
+            } else {
+                this.codeContextStatus = result?.error || 'Could not choose context.';
+                this.codeContextError = true;
+            }
+        } catch (error) {
+            this.codeContextStatus = error.message || 'Could not choose context.';
+            this.codeContextError = true;
+        }
+        this.codeContextSaving = false;
+        this.requestUpdate();
+    }
+
+    async handleSelectRecentCodeContext(context) {
+        if (!context?.cwd) return;
+        this.codeContextInput = context.cwd;
+        await this.handleSaveCodeContext();
     }
 
     handleMoveLeft() {
@@ -1347,6 +1540,61 @@ export class SettingsView extends LitElement {
             </div>
         `;
 
+        const recentContexts = (this.recentCodeContexts || [])
+            .filter((context) => context.cwd && context.cwd !== this.codeContext?.cwd)
+            .slice(0, 3);
+        const codeContextHTML = html`
+            <div class="context-section">
+                <div class="context-header">
+                    <span class="context-title">Code Context</span>
+                    <span class="context-label" title=${this.codeContext?.cwd || ''}>
+                        ${this.codeContext?.label || 'Not set'}
+                    </span>
+                </div>
+                <div class="context-path" title=${this.codeContext?.cwd || ''}>
+                    ${this.codeContext?.cwd || 'Choose the folder Codex and Claude should inspect.'}
+                </div>
+                <input
+                    class="context-input"
+                    type="text"
+                    .value=${this.codeContextInput || ''}
+                    placeholder="~/Documents/creative_studio_repo"
+                    @input=${this.handleCodeContextInput}
+                    @keydown=${(event) => {
+                        if (event.key === 'Enter') {
+                            event.preventDefault();
+                            this.handleSaveCodeContext();
+                        }
+                    }}
+                />
+                <div class="context-buttons">
+                    <button class="settings-button" @click=${this.handleSaveCodeContext} ?disabled=${this.codeContextSaving}>
+                        Apply
+                    </button>
+                    <button class="settings-button" @click=${this.handleChooseCodeContext} ?disabled=${this.codeContextSaving}>
+                        Choose
+                    </button>
+                </div>
+                ${recentContexts.length ? html`
+                    <div class="context-recent">
+                        ${recentContexts.map((context) => html`
+                            <button
+                                class="context-recent-item"
+                                title=${context.cwd}
+                                @click=${() => this.handleSelectRecentCodeContext(context)}
+                                ?disabled=${this.codeContextSaving}
+                            >
+                                ${context.label}
+                            </button>
+                        `)}
+                    </div>
+                ` : ''}
+                <div class="context-status ${this.codeContextError ? 'error' : ''}">
+                    ${this.codeContextStatus}
+                </div>
+            </div>
+        `;
+
         return html`
             <div class="settings-container">
                 <div class="header-section">
@@ -1366,6 +1614,7 @@ export class SettingsView extends LitElement {
                     </div>
                 </div>
 
+                ${codeContextHTML}
                 ${apiKeyManagementHTML}
                 ${modelSelectionHTML}
 

@@ -8,9 +8,8 @@
 require('dotenv').config();
 
 // When launched from Spotlight/Finder, Electron inherits launchd's sparse PATH
-// (/usr/bin:/bin:/usr/sbin:/sbin) and can't find the claude CLI, brew, etc.
-// Augment with common install locations so the Claude Agent SDK subprocess
-// resolves.
+// (/usr/bin:/bin:/usr/sbin:/sbin) and can't find local assistant CLIs, brew, etc.
+// Augment with common install locations so Codex and Claude fallback resolve.
 {
     const home = require('os').homedir();
     const extras = [
@@ -260,6 +259,38 @@ app.whenReady().then(async () => {
             console.log('[KeyHold] disabled (config.holdToMove=false).');
         }
 
+        if (process.env.CLAUDELY_DEBUG_SHOW_SETTINGS === '1') {
+            const settingsDelay = Number(process.env.CLAUDELY_DEBUG_SHOW_SETTINGS_DELAY_MS) || 2500;
+            setTimeout(() => {
+                try {
+                    require('./window/windowManager').showSettingsWindow();
+                    console.log('[DEBUG_SETTINGS] settings window requested');
+                } catch (e) {
+                    console.warn('[DEBUG_SETTINGS] failed:', e.message);
+                }
+            }, settingsDelay);
+        }
+
+        if (process.env.CLAUDELY_DEBUG_SUMMARY_WAIT_MS) {
+            const waitMs = Number(process.env.CLAUDELY_DEBUG_SUMMARY_WAIT_MS) || 2000;
+            const delayMs = Number(process.env.CLAUDELY_DEBUG_SUMMARY_WAIT_DELAY_MS) || 2500;
+            setTimeout(() => {
+                try {
+                    console.log(`[DEBUG_SUMMARY_WAIT] starting ${waitMs}ms pending summary then quitting`);
+                    listenService._trackSummaryJob(new Promise((resolve) => {
+                        setTimeout(() => {
+                            console.log('[DEBUG_SUMMARY_WAIT] pending summary resolved');
+                            resolve();
+                        }, waitMs);
+                    }), 'debug summary wait');
+                    app.quit();
+                } catch (e) {
+                    console.error('[DEBUG_SUMMARY_WAIT] ERR', e);
+                    app.exit(1);
+                }
+            }, delayMs);
+        }
+
         if (process.env.CLAUDELY_DEBUG_STT) {
             setTimeout(() => {
                 try {
@@ -322,7 +353,14 @@ app.whenReady().then(async () => {
             // smoke test reflects the cached-warm state of the app.
             const delay = Number(process.env.CLAUDELY_DEBUG_ASK_DELAY_MS) || 100000;
             setTimeout(async () => {
+                let debugContextRestore = null;
                 try {
+                    if (process.env.CLAUDELY_DEBUG_CONTEXT_CWD) {
+                        debugContextRestore = require('./features/context/contextService').getActiveContext().cwd;
+                        const result = await settingsService.setCodeContext(process.env.CLAUDELY_DEBUG_CONTEXT_CWD);
+                        if (!result?.success) throw new Error(`debug context switch failed: ${result?.error || 'unknown'}`);
+                        console.log(`[DEBUG_CONTEXT] active=${result.data.active.cwd} changed=${result.data.changed}`);
+                    }
                     console.log('[DEBUG_ASK] triggering manualFire via FireDispatcher');
                     const { getManualDispatcher } = require('./features/fire/instance');
                     let full = '';
@@ -331,6 +369,7 @@ app.whenReady().then(async () => {
                             onState: (s) => {
                                 if (s.type === 'thinking') console.log('[DEBUG_ASK] thinking (screenshot + tail)');
                                 else if (s.type === 'delta') { full += s.text; process.stdout.write(s.text); }
+                                else if (s.type === 'provider') console.log('[DEBUG_ASK][provider]', s.provider?.name || s.provider?.id, s.provider?.status || '');
                                 else if (s.type === 'done') { console.log('\n[DEBUG_ASK] done'); resolve(); }
                                 else if (s.type === 'error') { console.error('\n[DEBUG_ASK] error:', s.error); reject(new Error(s.error)); }
                                 else console.log('[DEBUG_ASK][state]', s.type);
@@ -339,9 +378,21 @@ app.whenReady().then(async () => {
                         dispatcher.manualFire({ question: process.env.CLAUDELY_DEBUG_ASK }).catch(reject);
                     });
                     console.log('[DEBUG_ASK] DONE len=' + full.length);
+                    if (debugContextRestore && process.env.CLAUDELY_DEBUG_CONTEXT_KEEP !== '1') {
+                        const result = await settingsService.setCodeContext(debugContextRestore);
+                        console.log(`[DEBUG_CONTEXT] restored=${result?.success ? result.data.active.cwd : 'failed'}`);
+                    }
                     app.exit(0);
                 } catch (e) {
                     console.error('[DEBUG_ASK] ERR', e);
+                    if (debugContextRestore && process.env.CLAUDELY_DEBUG_CONTEXT_KEEP !== '1') {
+                        try {
+                            const result = await settingsService.setCodeContext(debugContextRestore);
+                            console.log(`[DEBUG_CONTEXT] restored=${result?.success ? result.data.active.cwd : 'failed'}`);
+                        } catch (restoreError) {
+                            console.warn('[DEBUG_CONTEXT] restore failed:', restoreError.message);
+                        }
+                    }
                     app.exit(1);
                 }
             }, delay);
@@ -384,7 +435,8 @@ app.on('before-quit', async (event) => {
     
     try {
         // 1. Stop audio capture first
-        await listenService.closeSession();
+        await listenService.closeSession({ waitForSummary: true, shutdown: true });
+        await listenService.waitForPendingSummaries?.();
         console.log('[Shutdown] Audio capture stopped');
 
         // 2. End all active sessions

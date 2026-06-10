@@ -76,43 +76,43 @@ export class ListenView extends LitElement {
 }
 
 .hljs-keyword {
-    color: #ff79c6 !important;
+    color: #7dd3fc !important;
 }
 
 .hljs-string {
-    color: #f1fa8c !important;
+    color: #bef264 !important;
 }
 
 .hljs-comment {
-    color: #6272a4 !important;
+    color: #94a3b8 !important;
 }
 
 .hljs-number {
-    color: #bd93f9 !important;
+    color: #fbbf24 !important;
 }
 
 .hljs-function {
-    color: #50fa7b !important;
+    color: #86efac !important;
 }
 
 .hljs-title {
-    color: #50fa7b !important;
+    color: #86efac !important;
 }
 
 .hljs-variable {
-    color: #8be9fd !important;
+    color: #93c5fd !important;
 }
 
 .hljs-built_in {
-    color: #ffb86c !important;
+    color: #fdba74 !important;
 }
 
 .hljs-attr {
-    color: #50fa7b !important;
+    color: #a7f3d0 !important;
 }
 
 .hljs-tag {
-    color: #ff79c6 !important;
+    color: #7dd3fc !important;
 }
         .assistant-container {
             display: flex;
@@ -182,7 +182,56 @@ export class ListenView extends LitElement {
             white-space: nowrap;
             flex: 1;
             min-width: 0;
-            max-width: 200px;
+            max-width: 170px;
+        }
+
+        .provider-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 22px;
+            padding: 0 8px;
+            border-radius: 999px;
+            border: 1px solid rgba(125, 211, 252, 0.34);
+            background: rgba(8, 47, 73, 0.72);
+            color: rgba(224, 242, 254, 0.96);
+            font-size: 10px;
+            font-weight: 600;
+            white-space: nowrap;
+            max-width: 118px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .provider-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #38bdf8;
+            box-shadow: 0 0 8px rgba(56, 189, 248, 0.7);
+            flex: 0 0 auto;
+        }
+
+        .provider-badge[data-status='failed'] {
+            border-color: rgba(248, 113, 113, 0.5);
+            background: rgba(69, 10, 10, 0.72);
+            color: rgba(254, 226, 226, 0.96);
+        }
+
+        .provider-badge[data-status='failed'] .provider-dot {
+            background: #f87171;
+            box-shadow: 0 0 8px rgba(248, 113, 113, 0.7);
+        }
+
+        .provider-badge[data-status='fallback'] {
+            border-color: rgba(251, 191, 36, 0.5);
+            background: rgba(69, 40, 5, 0.72);
+            color: rgba(254, 243, 199, 0.96);
+        }
+
+        .provider-badge[data-status='fallback'] .provider-dot {
+            background: #fbbf24;
+            box-shadow: 0 0 8px rgba(251, 191, 36, 0.7);
         }
 
         .bar-left-text-content {
@@ -199,7 +248,7 @@ export class ListenView extends LitElement {
             gap: 4px;
             align-items: center;
             flex-shrink: 0;
-            width: 120px;
+            width: auto;
             justify-content: flex-end;
             box-sizing: border-box;
             padding: 4px;
@@ -208,17 +257,18 @@ export class ListenView extends LitElement {
         .toggle-button {
             display: flex;
             align-items: center;
-            gap: 5px;
+            gap: 0;
             background: transparent;
             color: rgba(255, 255, 255, 0.9);
             border: none;
             outline: none;
             box-shadow: none;
-            padding: 4px 8px;
+            padding: 4px;
             border-radius: 5px;
             font-size: 11px;
             font-weight: 500;
             cursor: pointer;
+            width: 24px;
             height: 24px;
             white-space: nowrap;
             transition: background-color 0.15s ease;
@@ -426,12 +476,16 @@ export class ListenView extends LitElement {
         captureStartTime: { type: Number },
         isSessionActive: { type: Boolean },
         hasCompletedRecording: { type: Boolean },
+        aiProvider: { type: Object },
+        codeContext: { type: Object },
     };
 
     constructor() {
         super();
         this.isSessionActive = false;
         this.hasCompletedRecording = false;
+        this.aiProvider = { id: 'codex', name: 'Codex CLI', status: 'ready' };
+        this.codeContext = null;
         this.viewMode = 'insights';
         this.isHovering = false;
         this.isAnimating = false;
@@ -475,6 +529,16 @@ export class ListenView extends LitElement {
                     this.requestUpdate();
                 }
             });
+            this._aiProviderListener = (event, provider) => {
+                this.aiProvider = provider || this.aiProvider;
+                this.requestUpdate();
+            };
+            window.api.listenView.onAiProviderUpdate?.(this._aiProviderListener);
+            this._codeContextListener = (event, payload) => {
+                this.codeContext = payload?.active || this.codeContext;
+                this.requestUpdate();
+            };
+            window.api.listenView.onCodeContextUpdate?.(this._codeContextListener);
         }
     }
 
@@ -489,11 +553,21 @@ export class ListenView extends LitElement {
         if (this.copyTimeout) {
             clearTimeout(this.copyTimeout);
         }
+        if (window.api && this._aiProviderListener) {
+            window.api.listenView.removeOnAiProviderUpdate?.(this._aiProviderListener);
+        }
+        if (window.api && this._codeContextListener) {
+            window.api.listenView.removeOnCodeContextUpdate?.(this._codeContextListener);
+        }
     }
 
     startTimer() {
         this.captureStartTime = Date.now();
         this.timerInterval = setInterval(() => {
+            // Skip the per-second re-render when the window isn't visible. The
+            // listen pill stays open across hours, so an unseen requestUpdate()
+            // tick adds up to a lot of wasted Lit diffing work overnight.
+            if (typeof document !== 'undefined' && document.hidden) return;
             const elapsed = Math.floor((Date.now() - this.captureStartTime) / 1000);
             const minutes = Math.floor(elapsed / 60)
                 .toString()
@@ -617,6 +691,20 @@ export class ListenView extends LitElement {
         this.adjustWindowHeightThrottled();
     }
 
+    getProviderStatus(provider = this.aiProvider) {
+        return provider?.status || 'ready';
+    }
+
+    getProviderBadgeText(provider = this.aiProvider) {
+        const name = provider?.name || 'Codex CLI';
+        const status = this.getProviderStatus(provider);
+        if (status === 'fallback') return 'Claude fallback';
+        if (status === 'failed') return 'Codex unavailable';
+        if (status === 'starting') return 'Codex starting';
+        if (status === 'running') return name;
+        return name;
+    }
+
     firstUpdated() {
         super.firstUpdated();
         setTimeout(() => this.adjustWindowHeight(), 200);
@@ -630,6 +718,7 @@ export class ListenView extends LitElement {
             : this.viewMode === 'insights'
             ? `Live insights`
             : `Claudely is Listening ${this.elapsedTime}`;
+        const contextTitle = this.codeContext?.cwd ? `Code context: ${this.codeContext.cwd}` : '';
 
         return html`
             <div class="assistant-container">
@@ -638,21 +727,31 @@ export class ListenView extends LitElement {
                         <span class="bar-left-text-content ${this.isAnimating ? 'slide-in' : ''}">${displayText}</span>
                     </div>
                     <div class="bar-controls">
-                        <button class="toggle-button" @click=${this.toggleViewMode}>
+                        <span
+                            class="provider-badge"
+                            data-status=${this.getProviderStatus(this.aiProvider)}
+                            title=${`${this.aiProvider?.detail || this.getProviderBadgeText(this.aiProvider)}${contextTitle ? ` · ${contextTitle}` : ''}`}
+                        >
+                            <span class="provider-dot"></span>
+                            ${this.getProviderBadgeText(this.aiProvider)}
+                        </span>
+                        <button
+                            class="toggle-button"
+                            @click=${this.toggleViewMode}
+                            title=${this.viewMode === 'insights' ? 'Show transcript' : 'Show insights'}
+                        >
                             ${this.viewMode === 'insights'
                                 ? html`
-                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                           <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" />
                                           <circle cx="12" cy="12" r="3" />
                                       </svg>
-                                      <span>Show Transcript</span>
                                   `
                                 : html`
-                                      <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                           <path d="M9 11l3 3L22 4" />
                                           <path d="M22 12v7a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h11" />
                                       </svg>
-                                      <span>Show Insights</span>
                                   `}
                         </button>
                         <button

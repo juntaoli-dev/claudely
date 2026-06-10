@@ -1,7 +1,7 @@
 // src/features/summary/summarizer.js
 //
 // Generate a per-session meeting summary by handing the recorded transcript +
-// Q&A + calendar context + screenshots to a locked-style Claude prompt. Output
+// Q&A + calendar context + screenshots to a locked-style assistant prompt. Output
 // is written to <base>.summary.md next to the transcript in the upload dir, so
 // the synced Drive folder ends up with a polished doc instead of relying on
 // Convey or another external summarizer.
@@ -13,7 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { ClaudeSession } = require('../claude/claudeSession');
+const { AssistantSession } = require('../ai/assistantSession');
 
 // The style guide. Lifted from the user's reference doc structure:
 //   • Banner header with TL;DR
@@ -212,12 +212,13 @@ function buildInputBlock({ meta, transcriptText, qa, screenshotPaths }) {
 
 class Summarizer {
     constructor({ session, model } = {}) {
-        // Keep summarizer cwd OUT of the user's source repo so Claude doesn't
+        // Keep summarizer cwd OUT of the user's source repo so the assistant doesn't
         // accidentally Read codebase files while summarizing. tmpdir is fine —
         // we feed everything inline anyway.
-        this.session = session || new ClaudeSession({
+        this.session = session || new AssistantSession({
             cwd: os.tmpdir(),
-            model: model || process.env.CLAUDELY_SUMMARY_MODEL || null,
+            codexModel: process.env.CLAUDELY_SUMMARY_CODEX_MODEL || null,
+            claudeModel: model || process.env.CLAUDELY_SUMMARY_CLAUDE_MODEL || process.env.CLAUDELY_SUMMARY_MODEL || null,
         });
     }
 

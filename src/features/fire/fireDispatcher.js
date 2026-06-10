@@ -1,17 +1,17 @@
 // src/features/fire/fireDispatcher.js
 //
 // Real FireDispatcher. Gates fires on auto-answer or wake phrase, captures the
-// current screen + 30 s transcript tail, and streams a Claude answer back via
+// current screen + 30 s transcript tail, and streams an AI answer back via
 // onState delta events. Queues up to 3 backlogged fires; drops oldest over cap.
 
 const { matchWake } = require('../classify/wakePhrase');
 
 class FireDispatcher {
-    constructor({ store, classifier, grabber, claude, config, onState } = {}) {
+    constructor({ store, classifier, grabber, claude, assistant, config, onState } = {}) {
         this.store = store;
         this.classifier = classifier;
         this.grabber = grabber;
-        this.claude = claude;
+        this.assistant = assistant || claude;
         this.config = config;
         this.onState = onState || (() => {});
         this._inFlight = false;
@@ -82,7 +82,7 @@ class FireDispatcher {
         }
 
         // Prepend meeting context (calendar event title, attendees, agenda)
-        // so Claude knows which meeting we're in without the user repeating it.
+        // so the assistant knows which meeting we're in without the user repeating it.
         // Skipped in tests (Vitest) and when CLAUDELY_SKIP_CALENDAR=1, since
         // spawning the EventKit helper would slow unit tests by ~200 ms each.
         if (!process.env.VITEST && process.env.CLAUDELY_SKIP_CALENDAR !== '1') {
@@ -111,7 +111,7 @@ class FireDispatcher {
 
         let assistantText = '';
         try {
-            await this.claude.ask({
+            await this.assistant.ask({
                 question,
                 transcriptTail,
                 imagePath,
@@ -122,7 +122,8 @@ class FireDispatcher {
                 onEvent: (e) => {
                     // Forward structured progress events so the renderer can
                     // show tool-call activity separately from answer text.
-                    if (e.kind === 'tool_use') this.onState({ type: 'tool', name: e.name, summary: e.summary });
+                    if (e.kind === 'provider') this.onState({ type: 'provider', provider: e.provider });
+                    else if (e.kind === 'tool_use') this.onState({ type: 'tool', name: e.name, summary: e.summary });
                     else if (e.kind === 'tool_result') this.onState({ type: 'tool-done', isError: e.isError, summary: e.summary });
                     else if (e.kind === 'thinking') this.onState({ type: 'thinking-text', text: e.text });
                 },
@@ -135,7 +136,7 @@ class FireDispatcher {
             } catch (_) { /* persistence best-effort */ }
             this.onState({ type: 'done' });
         } catch (e) {
-            this.onState({ type: 'error', error: 'claude: ' + e.message });
+            this.onState({ type: 'error', error: 'ai: ' + e.message });
         }
         this._inFlight = false;
     }

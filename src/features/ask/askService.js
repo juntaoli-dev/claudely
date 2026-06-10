@@ -1,10 +1,10 @@
 const { BrowserWindow } = require('electron');
-const os = require('os');
 const getWindowManager = () => require('../../window/windowManager');
 const internalBridge = require('../../bridge/internalBridge');
 const sessionRepository = require('../common/repositories/session');
 const askRepository = require('./repositories');
-const { ClaudeSession } = require('../claude/claudeSession');
+const { AssistantSession } = require('../ai/assistantSession');
+const contextService = require('../context/contextService');
 
 const getWindowPool = () => {
     try {
@@ -15,15 +15,24 @@ const getWindowPool = () => {
 };
 
 let sharedSession;
+let sharedSessionCwd;
 function getSession() {
-    if (!sharedSession) {
-        sharedSession = new ClaudeSession({
-            cwd: process.env.CLAUDELY_PROJECT_CWD || `${os.homedir()}/Documents/creative_studio_repo`,
-            model: process.env.CLAUDELY_MODEL || 'claude-sonnet-4-6',
+    const context = contextService.getActiveContext();
+    if (!sharedSession || sharedSessionCwd !== context.cwd) {
+        sharedSessionCwd = context.cwd;
+        sharedSession = new AssistantSession({
+            cwd: context.cwd,
+            codexModel: process.env.CLAUDELY_CODEX_MODEL || null,
+            claudeModel: process.env.CLAUDELY_CLAUDE_MODEL || process.env.CLAUDELY_MODEL || 'claude-sonnet-4-6',
         });
     }
     return sharedSession;
 }
+
+contextService.on('changed', () => {
+    sharedSession = null;
+    sharedSessionCwd = null;
+});
 
 // Plan-shape API. Consumed by featureBridge ask:question handler and Phase 5 FireDispatcher.
 async function ask({ question, transcriptTail = '', imagePath = null, onDelta }) {
@@ -39,8 +48,23 @@ class AskService {
             isStreaming: false,
             currentQuestion: '',
             currentResponse: '',
+            messages: [],
+            aiProvider: { id: 'codex', name: 'Codex CLI', status: 'ready' },
+            codeContext: contextService.getActiveContext(),
             showTextInput: true,
         };
+        contextService.on('changed', ({ active }) => {
+            this.state = {
+                ...this.state,
+                codeContext: active,
+                aiProvider: {
+                    ...(this.state.aiProvider || { id: 'codex', name: 'Codex CLI' }),
+                    status: 'ready',
+                    detail: `Code context: ${active.cwd}`,
+                },
+            };
+            this._broadcastState();
+        });
         console.log('[AskService] Service instance created.');
     }
 
@@ -91,6 +115,9 @@ class AskService {
             isStreaming: false,
             currentQuestion: '',
             currentResponse: '',
+            messages: [],
+            aiProvider: { id: 'codex', name: 'Codex CLI', status: 'ready' },
+            codeContext: contextService.getActiveContext(),
             showTextInput: true,
         };
         this._broadcastState();
@@ -105,6 +132,7 @@ class AskService {
         if (!question) return { success: true };
 
         internalBridge.emit('window:requestVisibility', { name: 'ask', visible: true });
+        const codeContext = contextService.getActiveContext();
         this.state = {
             ...this.state,
             isVisible: true,
@@ -112,6 +140,13 @@ class AskService {
             isStreaming: false,
             currentQuestion: question,
             currentResponse: '',
+            messages: [
+                ...(this.state.messages || []),
+                { id: `u-${Date.now()}`, role: 'user', content: question },
+                { id: `a-${Date.now()}`, role: 'assistant', content: '', provider: this.state.aiProvider, codeContext },
+            ],
+            aiProvider: { id: 'codex', name: 'Codex CLI', status: 'starting', detail: `Code context: ${codeContext.cwd}` },
+            codeContext,
             showTextInput: false,
         };
         this._broadcastState();
@@ -137,6 +172,7 @@ class AskService {
                 this.state.isLoading = false;
                 this.state.isStreaming = false;
                 this.state.showTextInput = true;
+                this._updateLastAssistant({ status: ok ? 'done' : 'error' });
                 this._broadcastState();
                 if (ok && sessionId && full) {
                     askRepository.addAiMessage({ sessionId, role: 'assistant', content: full }).catch((e) => {
@@ -147,6 +183,7 @@ class AskService {
                     // Surface the error in the answer pane so users see *why*
                     // it failed instead of an empty result.
                     this.state.currentResponse = `error: ${errorMsg || 'unknown'}`;
+                    this._updateLastAssistant({ content: this.state.currentResponse, status: 'error' });
                     this._broadcastState();
                     const askWin = getWindowPool()?.get('ask');
                     if (askWin && !askWin.isDestroyed()) {
@@ -159,7 +196,11 @@ class AskService {
             const toolLines = [];
             const dispatcher = getManualDispatcher({
                 onState: (s) => {
-                    if (s.type === 'thinking') {
+                    if (s.type === 'provider') {
+                        this.state.aiProvider = s.provider || this.state.aiProvider;
+                        this._updateLastAssistant({ provider: this.state.aiProvider, codeContext: this.state.codeContext });
+                        this._broadcastState();
+                    } else if (s.type === 'thinking') {
                         this.state.isLoading = true;
                         this.state.isStreaming = false;
                         this.state.toolProgress = '';
@@ -182,6 +223,11 @@ class AskService {
                         this.state.isLoading = false;
                         this.state.isStreaming = true;
                         this.state.currentResponse = full;
+                        this._updateLastAssistant({
+                            content: full,
+                            status: 'streaming',
+                            provider: this.state.aiProvider,
+                        });
                         this._broadcastState();
                     } else if (s.type === 'done') {
                         finish(true);
@@ -194,6 +240,17 @@ class AskService {
         });
     }
 }
+
+AskService.prototype._updateLastAssistant = function _updateLastAssistant(patch) {
+    const messages = [...(this.state.messages || [])];
+    for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'assistant') {
+            messages[i] = { ...messages[i], ...patch };
+            this.state.messages = messages;
+            return;
+        }
+    }
+};
 
 const askService = new AskService();
 

@@ -40,7 +40,7 @@ function start({ onFinal, onInterim, onState } = {}) {
         .replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
     const classifier = new ClassifierBus({ binaryPath: classifierPath });
     classifier.start();
-    // Real dispatcher now: passes store + classifier + real Claude + real
+    // Real dispatcher now: passes store + classifier + real assistant + real
     // screen grabber. onState surfaces delta/done/error/queued up to the
     // renderer via the same channel STT uses.
     // Register live store + classifier so any manual ask sees the same
@@ -170,8 +170,35 @@ function start({ onFinal, onInterim, onState } = {}) {
     });
 
     // Every 2s, emit a track byte-count snapshot so we can diagnose starvation.
+    // When the upstream Swift helper goes silent (e.g. Zoom call left running but
+    // dormant overnight), bytes stop changing — keep the IPC quiet in that case
+    // so the renderer doesn't re-render and Deepgram doesn't spin waiting for a
+    // transcript event that isn't coming. We still surface a single "stalled"
+    // tick once per minute so the diagnosis path remains visible.
+    let lastT0 = 0;
+    let lastT1 = 0;
+    let stalledTicks = 0;
+    let lastKeepAlive = 0;
     const statsTimer = setInterval(() => {
-        onState?.({ type: 'stats', track0: trackBytes[0], track1: trackBytes[1] });
+        const moved = trackBytes[0] !== lastT0 || trackBytes[1] !== lastT1;
+        if (moved) {
+            stalledTicks = 0;
+            lastT0 = trackBytes[0];
+            lastT1 = trackBytes[1];
+            onState?.({ type: 'stats', track0: trackBytes[0], track1: trackBytes[1] });
+            return;
+        }
+        stalledTicks++;
+        // 5 ticks = ~10s of silence. Send Deepgram KeepAlive so it doesn't idle-close,
+        // but skip the stats IPC. Re-emit one heartbeat per ~30s so the renderer
+        // can show a "stalled" indicator without spamming.
+        if (liveReady && !liveClosed && Date.now() - lastKeepAlive > 8000) {
+            try { live?.keepAlive?.(); } catch (_) {}
+            lastKeepAlive = Date.now();
+        }
+        if (stalledTicks % 15 === 0) {
+            onState?.({ type: 'stats', track0: trackBytes[0], track1: trackBytes[1], stalled: true });
+        }
     }, 2000);
     bus.on('stderr', (s) => onState?.({ type: 'stderr', text: s }));
     bus.on('exit', (code) => onState?.({ type: 'capture-exit', code }));

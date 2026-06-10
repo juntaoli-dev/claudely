@@ -156,6 +156,8 @@ contextBridge.exposeInMainWorld('api', {
     // Listeners
     onAskStateUpdate: (callback) => ipcRenderer.on('ask:stateUpdate', callback),
     removeOnAskStateUpdate: (callback) => ipcRenderer.removeListener('ask:stateUpdate', callback),
+    onCodeContextUpdate: (callback) => ipcRenderer.on('ai-context-updated', callback),
+    removeOnCodeContextUpdate: (callback) => ipcRenderer.removeListener('ai-context-updated', callback),
 
     onAskStreamError: (callback) => ipcRenderer.on('ask-response-stream-error', callback),
     removeOnAskStreamError: (callback) => ipcRenderer.removeListener('ask-response-stream-error', callback),
@@ -177,7 +179,11 @@ contextBridge.exposeInMainWorld('api', {
     
     // Listeners
     onSessionStateChanged: (callback) => ipcRenderer.on('session-state-changed', callback),
-    removeOnSessionStateChanged: (callback) => ipcRenderer.removeListener('session-state-changed', callback)
+    removeOnSessionStateChanged: (callback) => ipcRenderer.removeListener('session-state-changed', callback),
+    onAiProviderUpdate: (callback) => ipcRenderer.on('ai-provider-update', callback),
+    removeOnAiProviderUpdate: (callback) => ipcRenderer.removeListener('ai-provider-update', callback),
+    onCodeContextUpdate: (callback) => ipcRenderer.on('ai-context-updated', callback),
+    removeOnCodeContextUpdate: (callback) => ipcRenderer.removeListener('ai-context-updated', callback)
   },
 
   // src/ui/listen/stt/SttView.js
@@ -208,6 +214,9 @@ contextBridge.exposeInMainWorld('api', {
 
     // Model & Provider Management
     getModelSettings: () => ipcRenderer.invoke('settings:get-model-settings'), // Facade call
+    getCodeContext: () => ipcRenderer.invoke('settings:get-code-context'),
+    setCodeContext: (cwd) => ipcRenderer.invoke('settings:set-code-context', { cwd }),
+    chooseCodeContextFolder: () => ipcRenderer.invoke('settings:choose-code-context-folder'),
     getProviderConfig: () => ipcRenderer.invoke('model:get-provider-config'),
     getAllKeys: () => ipcRenderer.invoke('model:get-all-keys'),
     getAvailableModels: (type) => ipcRenderer.invoke('model:get-available-models', type),
@@ -251,6 +260,8 @@ contextBridge.exposeInMainWorld('api', {
     removeOnUserStateChanged: (callback) => ipcRenderer.removeListener('user-state-changed', callback),
     onSettingsUpdated: (callback) => ipcRenderer.on('settings-updated', callback),
     removeOnSettingsUpdated: (callback) => ipcRenderer.removeListener('settings-updated', callback),
+    onCodeContextUpdate: (callback) => ipcRenderer.on('ai-context-updated', callback),
+    removeOnCodeContextUpdate: (callback) => ipcRenderer.removeListener('ai-context-updated', callback),
     onPresetsUpdated: (callback) => ipcRenderer.on('presets-updated', callback),
     removeOnPresetsUpdated: (callback) => ipcRenderer.removeListener('presets-updated', callback),
     onShortcutsUpdated: (callback) => ipcRenderer.on('shortcuts-updated', callback),

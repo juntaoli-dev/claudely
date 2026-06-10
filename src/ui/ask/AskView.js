@@ -15,6 +15,9 @@ export class AskView extends LitElement {
         headerAnimating: { type: Boolean },
         isStreaming: { type: Boolean },
         toolProgress: { type: String },
+        messages: { type: Array },
+        aiProvider: { type: Object },
+        codeContext: { type: Object },
     };
 
     static styles = css`
@@ -142,34 +145,34 @@ export class AskView extends LitElement {
         }
 
         .hljs-keyword {
-            color: #ff79c6 !important;
+            color: #7dd3fc !important;
         }
         .hljs-string {
-            color: #f1fa8c !important;
+            color: #bef264 !important;
         }
         .hljs-comment {
-            color: #6272a4 !important;
+            color: #94a3b8 !important;
         }
         .hljs-number {
-            color: #bd93f9 !important;
+            color: #fbbf24 !important;
         }
         .hljs-function {
-            color: #50fa7b !important;
+            color: #86efac !important;
         }
         .hljs-variable {
-            color: #8be9fd !important;
+            color: #93c5fd !important;
         }
         .hljs-built_in {
-            color: #ffb86c !important;
+            color: #fdba74 !important;
         }
         .hljs-title {
-            color: #50fa7b !important;
+            color: #86efac !important;
         }
         .hljs-attr {
-            color: #50fa7b !important;
+            color: #a7f3d0 !important;
         }
         .hljs-tag {
-            color: #ff79c6 !important;
+            color: #7dd3fc !important;
         }
 
         .ask-container {
@@ -227,7 +230,7 @@ export class AskView extends LitElement {
         .response-icon {
             width: 20px;
             height: 20px;
-            background: rgba(255, 255, 255, 0.2);
+            background: rgba(20, 184, 166, 0.25);
             border-radius: 50%;
             display: flex;
             align-items: center;
@@ -238,7 +241,7 @@ export class AskView extends LitElement {
         .response-icon svg {
             width: 12px;
             height: 12px;
-            stroke: rgba(255, 255, 255, 0.9);
+            stroke: rgba(204, 251, 241, 0.95);
         }
 
         .response-label {
@@ -285,6 +288,53 @@ export class AskView extends LitElement {
             text-overflow: ellipsis;
             max-width: 300px;
             margin-right: 8px;
+        }
+
+        .provider-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 24px;
+            padding: 0 9px;
+            border-radius: 999px;
+            border: 1px solid rgba(125, 211, 252, 0.34);
+            background: rgba(8, 47, 73, 0.72);
+            color: rgba(224, 242, 254, 0.96);
+            font-size: 11px;
+            font-weight: 600;
+            white-space: nowrap;
+            max-width: 170px;
+        }
+
+        .provider-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #38bdf8;
+            box-shadow: 0 0 8px rgba(56, 189, 248, 0.7);
+            flex: 0 0 auto;
+        }
+
+        .provider-badge[data-status='failed'] {
+            border-color: rgba(248, 113, 113, 0.5);
+            background: rgba(69, 10, 10, 0.72);
+            color: rgba(254, 226, 226, 0.96);
+        }
+
+        .provider-badge[data-status='failed'] .provider-dot {
+            background: #f87171;
+            box-shadow: 0 0 8px rgba(248, 113, 113, 0.7);
+        }
+
+        .provider-badge[data-status='fallback'] {
+            border-color: rgba(251, 191, 36, 0.5);
+            background: rgba(69, 40, 5, 0.72);
+            color: rgba(254, 243, 199, 0.96);
+        }
+
+        .provider-badge[data-status='fallback'] .provider-dot {
+            background: #fbbf24;
+            box-shadow: 0 0 8px rgba(251, 191, 36, 0.7);
         }
 
         .header-controls {
@@ -364,14 +414,96 @@ export class AskView extends LitElement {
         .response-container {
             flex: 1;
             padding: 16px;
-            padding-left: 48px;
             overflow-y: auto;
             font-size: 14px;
-            line-height: 1.6;
+            line-height: 1.5;
             background: transparent;
             min-height: 0;
             max-height: 400px;
             position: relative;
+        }
+
+        .conversation {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            min-height: 100%;
+        }
+
+        .message-row {
+            display: flex;
+            width: 100%;
+        }
+
+        .message-row.user {
+            justify-content: flex-end;
+        }
+
+        .message-row.assistant {
+            justify-content: flex-start;
+        }
+
+        .message-bubble {
+            max-width: min(82%, 520px);
+            border-radius: 18px;
+            padding: 10px 13px;
+            box-sizing: border-box;
+            overflow-wrap: anywhere;
+            user-select: text !important;
+            cursor: text !important;
+        }
+
+        .message-bubble.user {
+            color: #ffffff;
+            background: rgba(37, 99, 235, 0.92);
+            border-bottom-right-radius: 6px;
+            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.22);
+        }
+
+        .message-bubble.assistant {
+            color: rgba(248, 250, 252, 0.95);
+            background: rgba(15, 23, 42, 0.84);
+            border: 1px solid rgba(148, 163, 184, 0.24);
+            border-bottom-left-radius: 6px;
+        }
+
+        .message-meta {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 5px;
+            color: rgba(203, 213, 225, 0.72);
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0;
+        }
+
+        .message-context {
+            color: rgba(125, 211, 252, 0.82);
+            max-width: 180px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .message-content {
+            color: inherit;
+        }
+
+        .message-content p:first-child {
+            margin-top: 0;
+        }
+
+        .message-content p:last-child {
+            margin-bottom: 0;
+        }
+
+        .tool-progress {
+            font-family: ui-monospace, Menlo, Monaco, Consolas, monospace;
+            font-size: 11px;
+            color: rgba(186, 230, 253, 0.78);
+            margin-bottom: 8px;
+            white-space: pre-wrap;
         }
 
         .response-container.hidden {
@@ -647,43 +779,26 @@ export class AskView extends LitElement {
         .submit-btn, .clear-btn {
             display: flex;
             align-items: center;
-            background: transparent;
+            justify-content: center;
+            background: rgba(37, 99, 235, 0.92);
             color: white;
-            border: none;
-            border-radius: 6px;
+            border: 1px solid rgba(147, 197, 253, 0.45);
+            border-radius: 50%;
             margin-left: 8px;
             font-size: 13px;
             font-family: 'Helvetica Neue', sans-serif;
             font-weight: 500;
             overflow: hidden;
             cursor: pointer;
-            transition: background 0.15s;
+            transition: background 0.15s, transform 0.15s;
             height: 32px;
-            padding: 0 10px;
-            box-shadow: none;
+            width: 32px;
+            padding: 0;
+            box-shadow: 0 8px 20px rgba(37, 99, 235, 0.24);
         }
         .submit-btn:hover, .clear-btn:hover {
-            background: rgba(255,255,255,0.1);
-        }
-        .btn-label {
-            margin-right: 8px;
-            display: flex;
-            align-items: center;
-            height: 100%;
-        }
-        .btn-icon {
-            background: rgba(255,255,255,0.1);
-            border-radius: 13%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 18px;
-            height: 18px;
-        }
-        .btn-icon img, .btn-icon svg {
-            width: 13px;
-            height: 13px;
-            display: block;
+            background: rgba(59, 130, 246, 0.98);
+            transform: translateY(-1px);
         }
         .header-clear-btn {
             background: transparent;
@@ -716,6 +831,9 @@ export class AskView extends LitElement {
         super();
         this.currentResponse = '';
         this.currentQuestion = '';
+        this.messages = [];
+        this.aiProvider = { id: 'codex', name: 'Codex CLI', status: 'ready' };
+        this.codeContext = null;
         this.isLoading = false;
         this.copyState = 'idle';
         this.showTextInput = true;
@@ -723,6 +841,7 @@ export class AskView extends LitElement {
         this.headerAnimating = false;
         this.isStreaming = false;
         this.toolProgress = '';
+        this.lineCopyTimeouts = {};
 
         this.marked = null;
         this.hljs = null;
@@ -791,6 +910,9 @@ export class AskView extends LitElement {
             window.api.askView.onAskStateUpdate((event, newState) => {
                 this.currentResponse = newState.currentResponse;
                 this.currentQuestion = newState.currentQuestion;
+                this.messages        = newState.messages || [];
+                this.aiProvider      = newState.aiProvider || this.aiProvider;
+                this.codeContext     = newState.codeContext || this.codeContext;
                 this.isLoading       = newState.isLoading;
                 this.isStreaming     = newState.isStreaming;
                 this.toolProgress    = newState.toolProgress || '';
@@ -806,6 +928,11 @@ export class AskView extends LitElement {
                   }
                 }
               });
+            this._codeContextListener = (event, payload) => {
+                this.codeContext = payload?.active || this.codeContext;
+                this.requestUpdate();
+            };
+            window.api.askView.onCodeContextUpdate?.(this._codeContextListener);
             console.log('AskView: IPC 이벤트 리스너 등록 완료');
         }
     }
@@ -837,6 +964,9 @@ export class AskView extends LitElement {
             window.api.askView.removeOnShowTextInput(this.handleShowTextInput);
             window.api.askView.removeOnScrollResponseUp(this.handleScroll);
             window.api.askView.removeOnScrollResponseDown(this.handleScroll);
+            if (this._codeContextListener) {
+                window.api.askView.removeOnCodeContextUpdate?.(this._codeContextListener);
+            }
             console.log('✅ AskView: IPC 이벤트 리스너 제거 필요');
         }
     }
@@ -845,15 +975,15 @@ export class AskView extends LitElement {
     async loadLibraries() {
         try {
             if (!window.marked) {
-                await this.loadScript('../../assets/marked-4.3.0.min.js');
+                await this.loadScript('../assets/marked-4.3.0.min.js');
             }
 
             if (!window.hljs) {
-                await this.loadScript('../../assets/highlight-11.9.0.min.js');
+                await this.loadScript('../assets/highlight-11.9.0.min.js');
             }
 
             if (!window.DOMPurify) {
-                await this.loadScript('../../assets/dompurify-3.0.7.min.js');
+                await this.loadScript('../assets/dompurify-3.0.7.min.js');
             }
 
             this.marked = window.marked;
@@ -919,6 +1049,7 @@ export class AskView extends LitElement {
     clearResponseContent() {
         this.currentResponse = '';
         this.currentQuestion = '';
+        this.messages = [];
         this.isLoading = false;
         this.isStreaming = false;
         this.headerText = 'AI Response';
@@ -996,40 +1127,78 @@ export class AskView extends LitElement {
     renderContent() {
         const responseContainer = this.shadowRoot.getElementById('responseContainer');
         if (!responseContainer) return;
-    
-        // Show in-progress tool calls (e.g. Read / Grep / Bash) above the
-        // answer so the user sees activity while Claude is still thinking.
-        const progressBlock = (this.toolProgress && (this.isLoading || this.isStreaming))
-            ? `<div class="tool-progress" style="font-family: ui-monospace, Menlo, monospace; font-size: 11px; opacity: 0.65; margin-bottom: 8px; white-space: pre-wrap;">${
-                String(this.toolProgress).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
-              }</div>`
-            : '';
 
-        // Check loading state
-        if (this.isLoading) {
-            responseContainer.innerHTML = `
-              ${progressBlock}
-              <div class="loading-dots">
-                <div class="loading-dot"></div>
-                <div class="loading-dot"></div>
-                <div class="loading-dot"></div>
-              </div>`;
-            this.resetStreamingParser();
-            return;
-        }
-        
-        // If there is no response, show empty state
-        if (!this.currentResponse) {
-            responseContainer.innerHTML = `<div class="empty-state">...</div>`;
-            this.resetStreamingParser();
-            return;
-        }
-        
-        // Set streaming markdown parser
-        this.renderStreamingMarkdown(responseContainer);
+        const messages = this.messages || [];
+        responseContainer.querySelectorAll('.assistant-markdown').forEach((node) => {
+            const message = messages.find((m) => String(m.id) === node.dataset.messageId);
+            if (!message) return;
 
-        // After updating content, recalculate window height
+            const isActive = this.isLastAssistantMessage(message);
+            const progressBlock = (isActive && this.toolProgress && (this.isLoading || this.isStreaming))
+                ? `<div class="tool-progress">${this.escapeHtml(this.toolProgress)}</div>`
+                : '';
+
+            if (isActive && this.isLoading && !message.content) {
+                node.innerHTML = `
+                    ${progressBlock}
+                    <div class="loading-dots">
+                        <div class="loading-dot"></div>
+                        <div class="loading-dot"></div>
+                        <div class="loading-dot"></div>
+                    </div>`;
+                return;
+            }
+
+            node.innerHTML = `${progressBlock}${this.renderSafeMarkdown(message.content || '')}`;
+            if (this.hljs) {
+                node.querySelectorAll('pre code').forEach(block => {
+                    if (!block.hasAttribute('data-highlighted')) {
+                        this.hljs.highlightElement(block);
+                        block.setAttribute('data-highlighted', 'true');
+                    }
+                });
+            }
+        });
+
+        responseContainer.scrollTop = responseContainer.scrollHeight;
         this.adjustWindowHeightThrottled();
+    }
+
+    renderSafeMarkdown(text) {
+        const textToRender = text || '';
+        if (!textToRender) return '<div class="empty-state">...</div>';
+
+        if (this.isLibrariesLoaded && this.marked && this.DOMPurify) {
+            try {
+                return this.DOMPurify.sanitize(this.marked.parse(textToRender), {
+                    ALLOWED_TAGS: [
+                        'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'strong', 'b', 'em', 'i',
+                        'ul', 'ol', 'li', 'blockquote', 'code', 'pre', 'a', 'img', 'table', 'thead',
+                        'tbody', 'tr', 'th', 'td', 'hr', 'sup', 'sub', 'del', 'ins',
+                    ],
+                    ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel'],
+                });
+            } catch (error) {
+                console.error('Error rendering safe markdown:', error);
+            }
+        }
+
+        return `<p>${this.escapeHtml(textToRender).replace(/\n/g, '<br>')}</p>`;
+    }
+
+    escapeHtml(value) {
+        return String(value || '').replace(/[&<>"']/g, (c) => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+        }[c]));
+    }
+
+    isLastAssistantMessage(message) {
+        const assistantMessages = (this.messages || []).filter((m) => m.role === 'assistant');
+        return assistantMessages.length > 0 && assistantMessages[assistantMessages.length - 1].id === message.id;
     }
 
     resetStreamingParser() {
@@ -1216,10 +1385,16 @@ export class AskView extends LitElement {
     async handleCopy() {
         if (this.copyState === 'copied') return;
 
-        let responseToCopy = this.currentResponse;
+        const messages = this.messages || [];
+        const textToCopy = messages.length > 0
+            ? messages.map((message) => {
+                const label = message.role === 'user' ? 'User' : (message.provider?.name || this.aiProvider?.name || 'Assistant');
+                return `${label}: ${message.content || ''}`;
+            }).join('\n\n')
+            : `Question: ${this.currentQuestion}\n\nAnswer: ${this.currentResponse}`;
 
         if (this.isDOMPurifyLoaded && this.DOMPurify) {
-            const testHtml = this.renderMarkdown(responseToCopy);
+            const testHtml = this.renderMarkdown(textToCopy);
             const sanitized = this.DOMPurify.sanitize(testHtml);
 
             if (this.DOMPurify.removed && this.DOMPurify.removed.length > 0) {
@@ -1227,8 +1402,6 @@ export class AskView extends LitElement {
                 return;
             }
         }
-
-        const textToCopy = `Question: ${this.currentQuestion}\n\nAnswer: ${responseToCopy}`;
 
         try {
             await navigator.clipboard.writeText(textToCopy);
@@ -1314,11 +1487,21 @@ export class AskView extends LitElement {
         super.updated(changedProperties);
     
         // ✨ isLoading 또는 currentResponse가 변경될 때마다 뷰를 다시 그립니다.
-        if (changedProperties.has('isLoading') || changedProperties.has('currentResponse')) {
+        if (
+            changedProperties.has('isLoading') ||
+            changedProperties.has('currentResponse') ||
+            changedProperties.has('messages') ||
+            changedProperties.has('toolProgress')
+        ) {
             this.renderContent();
         }
     
-        if (changedProperties.has('showTextInput') || changedProperties.has('isLoading') || changedProperties.has('currentResponse')) {
+        if (
+            changedProperties.has('showTextInput') ||
+            changedProperties.has('isLoading') ||
+            changedProperties.has('currentResponse') ||
+            changedProperties.has('messages')
+        ) {
             this.adjustWindowHeightThrottled();
         }
     
@@ -1338,11 +1521,32 @@ export class AskView extends LitElement {
         return question.substring(0, maxLength) + '...';
     }
 
+    getProviderName(provider = this.aiProvider) {
+        return provider?.name || 'Codex CLI';
+    }
+
+    getProviderStatus(provider = this.aiProvider) {
+        return provider?.status || 'ready';
+    }
+
+    getProviderBadgeText(provider = this.aiProvider) {
+        const name = this.getProviderName(provider);
+        const status = this.getProviderStatus(provider);
+        if (status === 'fallback') return `${name} fallback`;
+        if (status === 'failed') return `${name} unavailable`;
+        if (status === 'starting') return `${name} starting`;
+        if (status === 'running') return `${name} running`;
+        return name;
+    }
+
 
 
     render() {
-        const hasResponse = this.isLoading || this.currentResponse || this.isStreaming;
-        const headerText = this.isLoading ? 'Thinking...' : 'AI Response';
+        const messages = this.messages || [];
+        const hasResponse = this.isLoading || this.currentResponse || this.isStreaming || messages.length > 0;
+        const headerText = this.isLoading ? 'Thinking' : 'Conversation';
+        const provider = this.aiProvider || { id: 'codex', name: 'Codex CLI', status: 'ready' };
+        const activeContextTitle = this.codeContext?.cwd ? `Code context: ${this.codeContext.cwd}` : '';
 
         return html`
             <div class="ask-container">
@@ -1358,7 +1562,14 @@ export class AskView extends LitElement {
                         <span class="response-label">${headerText}</span>
                     </div>
                     <div class="header-right">
-                        <span class="question-text">${this.getTruncatedQuestion(this.currentQuestion)}</span>
+                        <span
+                            class="provider-badge"
+                            data-status=${this.getProviderStatus(provider)}
+                            title=${`${provider.detail || this.getProviderBadgeText(provider)}${activeContextTitle ? ` · ${activeContextTitle}` : ''}`}
+                        >
+                            <span class="provider-dot"></span>
+                            ${this.getProviderBadgeText(provider)}
+                        </span>
                         <div class="header-controls">
                             <button class="copy-button ${this.copyState === 'copied' ? 'copied' : ''}" @click=${this.handleCopy}>
                                 <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1389,7 +1600,27 @@ export class AskView extends LitElement {
 
                 <!-- Response Container -->
                 <div class="response-container ${!hasResponse ? 'hidden' : ''}" id="responseContainer">
-                    <!-- Content is dynamically generated in updateResponseContent() -->
+                    <div class="conversation">
+                        ${messages.map((message) => html`
+                            <div class="message-row ${message.role}">
+                                <div class="message-bubble ${message.role}">
+                                    ${message.role === 'assistant'
+                                        ? html`
+                                            <div class="message-meta">
+                                                <span>${this.getProviderBadgeText(message.provider || provider)}</span>
+                                                ${(message.codeContext?.label || this.codeContext?.label) ? html`
+                                                    <span class="message-context" title=${message.codeContext?.cwd || this.codeContext?.cwd || ''}>
+                                                        ${message.codeContext?.label || this.codeContext?.label}
+                                                    </span>
+                                                ` : ''}
+                                            </div>
+                                            <div class="message-content assistant-markdown" data-message-id=${message.id}></div>
+                                        `
+                                        : html`<div class="message-content">${message.content}</div>`}
+                                </div>
+                            </div>
+                        `)}
+                    </div>
                 </div>
 
                 <!-- Text Input Container -->
@@ -1404,11 +1635,12 @@ export class AskView extends LitElement {
                     <button
                         class="submit-btn"
                         @click=${this.handleSendText}
+                        title="Send"
                     >
-                        <span class="btn-label">Submit</span>
-                        <span class="btn-icon">
-                            ↵
-                        </span>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 19V5" />
+                            <path d="M5 12l7-7 7 7" />
+                        </svg>
                     </button>
                 </div>
             </div>

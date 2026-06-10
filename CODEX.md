@@ -36,6 +36,14 @@ from Cmd+Space.
    - For AI-provider changes, disable fallback when useful so the intended
      provider is proven directly.
    - Quit and verify no `Claudely`, `audio-capture`, or `classifier` processes remain.
+7. Commit and push.
+   - Commit the verified change on the current feature branch. If on `main`,
+     create a `codex/<description>` branch first.
+   - Push the branch to `origin`.
+   - Update the existing branch PR, or open a draft PR against `main` if none
+     exists.
+   - Do not leave verified work local-only unless push/PR creation fails, and
+     report the exact failure.
 
 ## Final Response Rule
 
@@ -45,6 +53,7 @@ For shipping-code changes, the final response must explicitly state:
 - Dev-shell e2e result.
 - `npm run package` result.
 - Installed `/Applications/Claudely.app` e2e result.
+- Commit, push, and PR/branch result.
 - Any screenshot path used for visual confirmation.
 
 If any gate fails, say where it failed and what the next move is. Do not end

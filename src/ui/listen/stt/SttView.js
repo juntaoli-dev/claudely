@@ -1,4 +1,5 @@
 import { html, css, LitElement } from '../../assets/lit-core-2.7.4.min.js';
+import { isNearBottom } from './autoScroll.js';
 
 export class SttView extends LitElement {
     static styles = css`
@@ -97,8 +98,10 @@ export class SttView extends LitElement {
         this.isVisible = true;
         this.messageIdCounter = 0;
         this._shouldScrollAfterUpdate = false;
+        this._autoFollowTranscript = true;
 
         this.handleSttUpdate = this.handleSttUpdate.bind(this);
+        this.handleTranscriptScroll = this.handleTranscriptScroll.bind(this);
     }
 
     connectedCallback() {
@@ -118,6 +121,8 @@ export class SttView extends LitElement {
     // Handle session reset from parent
     resetTranscript() {
         this.sttMessages = [];
+        this._autoFollowTranscript = true;
+        this._shouldScrollAfterUpdate = true;
         this.requestUpdate();
     }
 
@@ -125,7 +130,8 @@ export class SttView extends LitElement {
         if (text === undefined) return;
 
         const container = this.shadowRoot.querySelector('.transcription-container');
-        this._shouldScrollAfterUpdate = container ? container.scrollTop + container.clientHeight >= container.scrollHeight - 10 : false;
+        this._shouldScrollAfterUpdate = this._autoFollowTranscript || isNearBottom(container);
+        if (this._shouldScrollAfterUpdate) this._autoFollowTranscript = true;
 
         const findLastPartialIdx = spk => {
             for (let i = this.sttMessages.length - 1; i >= 0; i--) {
@@ -192,12 +198,18 @@ export class SttView extends LitElement {
     }
 
     scrollToBottom() {
-        setTimeout(() => {
+        requestAnimationFrame(() => {
             const container = this.shadowRoot.querySelector('.transcription-container');
             if (container) {
                 container.scrollTop = container.scrollHeight;
+                this._autoFollowTranscript = true;
             }
-        }, 0);
+        });
+    }
+
+    handleTranscriptScroll() {
+        const container = this.shadowRoot.querySelector('.transcription-container');
+        this._autoFollowTranscript = isNearBottom(container);
     }
 
     getSpeakerClass(speaker) {
@@ -217,6 +229,10 @@ export class SttView extends LitElement {
                 this._shouldScrollAfterUpdate = false;
             }
         }
+
+        if (changedProperties.has('isVisible') && this.isVisible && this._autoFollowTranscript) {
+            this.scrollToBottom();
+        }
     }
 
     render() {
@@ -225,7 +241,7 @@ export class SttView extends LitElement {
         }
 
         return html`
-            <div class="transcription-container">
+            <div class="transcription-container" @scroll=${this.handleTranscriptScroll}>
                 ${this.sttMessages.length === 0
                     ? html`<div class="empty-state">Waiting for speech...</div>`
                     : this.sttMessages.map(msg => html`
@@ -239,4 +255,4 @@ export class SttView extends LitElement {
     }
 }
 
-customElements.define('stt-view', SttView); 
+customElements.define('stt-view', SttView);

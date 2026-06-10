@@ -226,7 +226,7 @@ app.whenReady().then(async () => {
         // app opens (Cluely-style). User can panic-mute via Cmd+Shift+M or set
         // autoListen=false in ~/.claudely/config.json to opt out.
         const _config = require('./features/common/config/config');
-        if (_config.get('autoListen')) {
+        if (_config.get('autoListen') && process.env.CLAUDELY_DEBUG_TRANSCRIPT_SCROLL !== '1') {
             setTimeout(async () => {
                 try {
                     console.log('[autoListen] starting STT pipeline');
@@ -269,6 +269,95 @@ app.whenReady().then(async () => {
                     console.warn('[DEBUG_SETTINGS] failed:', e.message);
                 }
             }, settingsDelay);
+        }
+
+        if (process.env.CLAUDELY_DEBUG_TRANSCRIPT_SCROLL === '1') {
+            const delayMs = Number(process.env.CLAUDELY_DEBUG_TRANSCRIPT_SCROLL_DELAY_MS) || 2000;
+            setTimeout(async () => {
+                try {
+                    const internalBridge = require('./bridge/internalBridge');
+                    const { windowPool } = require('./window/windowManager');
+                    internalBridge.emit('window:requestVisibility', { name: 'listen', visible: true });
+                    await new Promise((resolve) => setTimeout(resolve, 500));
+                    const listenWindow = windowPool.get('listen');
+                    if (!listenWindow || listenWindow.isDestroyed()) throw new Error('listen window missing');
+
+                    const result = await listenWindow.webContents.executeJavaScript(`
+                        (async () => {
+                            const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+                            const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
+                            const findListenView = () => document.querySelector('claudely-app')?.shadowRoot?.querySelector('listen-view');
+                            let listenView = null;
+                            for (let i = 0; i < 80; i++) {
+                                listenView = findListenView();
+                                if (listenView) break;
+                                await new Promise((resolve) => setTimeout(resolve, 50));
+                            }
+                            if (!listenView) return { ok: false, reason: 'listen-view missing' };
+                            listenView.viewMode = 'transcript';
+                            listenView.requestUpdate();
+                            await listenView.updateComplete;
+
+                            let stt = null;
+                            for (let i = 0; i < 80; i++) {
+                                stt = listenView.shadowRoot?.querySelector('stt-view');
+                                if (stt) break;
+                                await new Promise((resolve) => setTimeout(resolve, 50));
+                            }
+                            if (!stt) return { ok: false, reason: 'stt-view missing' };
+                            stt.resetTranscript();
+                            await stt.updateComplete;
+                            await frame();
+
+                            const addLine = async (text) => {
+                                stt.handleSttUpdate(null, { speaker: 'them-0', text, isFinal: true, isPartial: false });
+                                await stt.updateComplete;
+                                await frame();
+                            };
+
+                            for (let i = 0; i < 90; i++) {
+                                await addLine('debug transcript line ' + String(i).padStart(2, '0') + ' with enough text to create a scrollable chat bubble');
+                            }
+
+                            const container = stt.shadowRoot?.querySelector('.transcription-container');
+                            if (!container) return { ok: false, reason: 'transcription container missing' };
+                            const bottomGap = () => Math.max(0, container.scrollHeight - container.clientHeight - container.scrollTop);
+
+                            const initialGap = bottomGap();
+                            container.scrollTop = 0;
+                            container.dispatchEvent(new Event('scroll', { bubbles: true }));
+                            await pause();
+                            const pausedTop = container.scrollTop;
+                            await addLine('debug line while user is reading older transcript');
+                            const pausedAfter = container.scrollTop;
+                            const pausedHeld = Math.abs(pausedAfter - pausedTop) <= 2;
+
+                            container.scrollTop = container.scrollHeight;
+                            container.dispatchEvent(new Event('scroll', { bubbles: true }));
+                            await pause();
+                            await addLine('debug line after user returned to bottom');
+                            const resumedGap = bottomGap();
+
+                            return {
+                                ok: container.scrollHeight > container.clientHeight && initialGap <= 48 && pausedHeld && resumedGap <= 48,
+                                initialGap,
+                                pausedTop,
+                                pausedAfter,
+                                pausedHeld,
+                                resumedGap,
+                                scrollHeight: container.scrollHeight,
+                                clientHeight: container.clientHeight,
+                                messageCount: stt.sttMessages.length,
+                            };
+                        })()
+                    `);
+                    console.log('[DEBUG_TRANSCRIPT_SCROLL]', JSON.stringify(result));
+                    app.exit(result?.ok ? 0 : 7);
+                } catch (e) {
+                    console.error('[DEBUG_TRANSCRIPT_SCROLL] ERR', e);
+                    app.exit(1);
+                }
+            }, delayMs);
         }
 
         if (process.env.CLAUDELY_DEBUG_SUMMARY_WAIT_MS) {

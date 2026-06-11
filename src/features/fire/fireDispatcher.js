@@ -7,13 +7,19 @@
 const { matchWake } = require('../classify/wakePhrase');
 
 class FireDispatcher {
-    constructor({ store, classifier, grabber, claude, assistant, config, onState } = {}) {
+    constructor({ store, classifier, grabber, claude, assistant, config, onState, claudeContextProvider } = {}) {
         this.store = store;
         this.classifier = classifier;
         this.grabber = grabber;
         this.assistant = assistant || claude;
         this.config = config;
         this.onState = onState || (() => {});
+        // Per-Listen-session Claude resume bookkeeping. Provider returns
+        // { get: () => ({ sessionId, lastTranscriptSentTs }), set: (ctx) => void }
+        // and is null in non-Listen contexts (one-shot ask without a Listen
+        // session in progress), in which case we fall back to the legacy 30s-
+        // tail behaviour with no resumption.
+        this.claudeContextProvider = claudeContextProvider || null;
         this._inFlight = false;
         this._queue = [];
     }
@@ -76,9 +82,33 @@ class FireDispatcher {
         if (!imagePath) {
             try { imagePath = await this.grabber?.grab(); } catch (_) { imagePath = null; }
         }
+
+        // Resolve Claude resume context (per-Listen-session). When present:
+        // - First ask in the session: full transcript so far, no resume id.
+        // - Later asks: only the delta lines newer than lastTranscriptSentTs,
+        //   plus the resume id so Claude continues the same conversation.
+        let resumeSessionId = null;
+        let isFirstAsk = true;
+        let claudeCtx = null;
+        if (this.claudeContextProvider) {
+            try { claudeCtx = this.claudeContextProvider.get(); } catch (_) { claudeCtx = null; }
+        }
+        if (claudeCtx?.claudeSessionId) {
+            resumeSessionId = claudeCtx.claudeSessionId;
+            isFirstAsk = false;
+        }
+
         if (transcriptTail === undefined) {
-            try { transcriptTail = this.store?.tail({ now: line.ts || Date.now(), seconds: 30 }) || ''; }
-            catch (_) { transcriptTail = ''; }
+            try {
+                if (claudeCtx && this.store?.since) {
+                    // Delta mode: send only lines newer than what Claude has
+                    // already seen. On first ask lastTranscriptSentTs is null,
+                    // so since(0) returns the whole in-memory window.
+                    transcriptTail = this.store.since(claudeCtx.lastTranscriptSentTs || 0) || '';
+                } else {
+                    transcriptTail = this.store?.tail({ now: line.ts || Date.now(), seconds: 30 }) || '';
+                }
+            } catch (_) { transcriptTail = ''; }
         }
 
         // Prepend meeting context (calendar event title, attendees, agenda)
@@ -111,10 +141,12 @@ class FireDispatcher {
 
         let assistantText = '';
         try {
-            await this.assistant.ask({
+            const result = await this.assistant.ask({
                 question,
                 transcriptTail,
                 imagePath,
+                resumeSessionId,
+                isFirstAsk,
                 onDelta: (text) => {
                     assistantText += text;
                     this.onState({ type: 'delta', text });
@@ -128,6 +160,23 @@ class FireDispatcher {
                     else if (e.kind === 'thinking') this.onState({ type: 'thinking-text', text: e.text });
                 },
             });
+
+            // Persist updated Claude resume context so the next ask in this
+            // Listen session sends only the delta and resumes the same
+            // conversation. Only do this when we have a context provider —
+            // i.e. a Listen session is active and the dispatcher knows where
+            // to stash the ids.
+            if (this.claudeContextProvider && result?.sessionId) {
+                try {
+                    this.claudeContextProvider.set({
+                        claudeSessionId: result.sessionId,
+                        lastTranscriptSentTs: Date.now(),
+                    });
+                } catch (e) {
+                    console.warn('[FireDispatcher] could not persist Claude resume context:', e.message);
+                }
+            }
+
             try {
                 if (askSessionId && assistantText) {
                     const askRepository = require('../ask/repositories');

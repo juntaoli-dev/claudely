@@ -175,35 +175,70 @@ export class AskView extends LitElement {
             color: #7dd3fc !important;
         }
 
+        /* Liquid-glass aesthetic — translucent, heavy backdrop blur +
+           saturation boost, faint accent tint that picks up the active
+           theme, and a hairline gradient edge that reads as glass. */
         .ask-container {
             display: flex;
             flex-direction: column;
             height: 100%;
             width: 100%;
-            background: rgba(0, 0, 0, 0.6);
-            border-radius: 12px;
-            outline: 0.5px rgba(255, 255, 255, 0.3) solid;
-            outline-offset: -1px;
-            backdrop-filter: blur(1px);
+            background:
+                linear-gradient(
+                    180deg,
+                    rgba(var(--accent-rgb, 236, 72, 153), 0.16) 0%,
+                    rgba(20, 20, 24, 0.55) 70%
+                );
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            box-shadow:
+                0 12px 40px rgba(0, 0, 0, 0.45),
+                inset 0 1px 0 rgba(255, 255, 255, 0.18);
+            backdrop-filter: blur(42px) saturate(180%);
+            -webkit-backdrop-filter: blur(42px) saturate(180%);
             box-sizing: border-box;
             position: relative;
             overflow: hidden;
         }
 
+        /* Subtle accent ring + specular highlight at the top edge. */
         .ask-container::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 16px;
+            padding: 1px;
+            background: linear-gradient(
+                160deg,
+                rgba(var(--accent-rgb, 236, 72, 153), 0.45) 0%,
+                rgba(255, 255, 255, 0.18) 50%,
+                rgba(var(--accent-rgb, 236, 72, 153), 0.35) 100%
+            );
+            -webkit-mask:
+                linear-gradient(#fff 0 0) content-box,
+                linear-gradient(#fff 0 0);
+            -webkit-mask-composite: destination-out;
+            mask-composite: exclude;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        /* Highlight sweep across the top — gives the "wet" look. */
+        .ask-container::after {
             content: '';
             position: absolute;
             top: 0;
             left: 0;
             right: 0;
-            bottom: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.15);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            border-radius: 12px;
-            filter: blur(10px);
-            z-index: -1;
+            height: 35%;
+            background: linear-gradient(
+                180deg,
+                rgba(255, 255, 255, 0.10) 0%,
+                rgba(255, 255, 255, 0) 100%
+            );
+            pointer-events: none;
+            border-radius: 16px 16px 0 0;
+            z-index: 0;
         }
 
         .response-header {
@@ -916,10 +951,10 @@ export class AskView extends LitElement {
                 this.isLoading       = newState.isLoading;
                 this.isStreaming     = newState.isStreaming;
                 this.toolProgress    = newState.toolProgress || '';
-              
+
                 const wasHidden = !this.showTextInput;
                 this.showTextInput = newState.showTextInput;
-              
+
                 if (newState.showTextInput) {
                   if (wasHidden) {
                     this.updateComplete.then(() => this.focusTextInput());
@@ -1245,9 +1280,12 @@ export class AskView extends LitElement {
                 });
             }
 
-            // 스크롤을 맨 아래로
-            responseContainer.scrollTop = responseContainer.scrollHeight;
-            
+            // Scroll the OUTER scrollable container (responseContainer) to
+            // bottom so the live answer stays in view as it streams. The
+            // function param is the inner slot now, so look up the parent.
+            const outer = this.shadowRoot.getElementById('responseContainer');
+            if (outer) outer.scrollTop = outer.scrollHeight;
+
         } catch (error) {
             console.error('Error rendering streaming markdown:', error);
             // 에러 발생 시 기본 텍스트 렌더링으로 폴백
@@ -1485,7 +1523,7 @@ export class AskView extends LitElement {
 
     updated(changedProperties) {
         super.updated(changedProperties);
-    
+
         // ✨ isLoading 또는 currentResponse가 변경될 때마다 뷰를 다시 그립니다.
         if (
             changedProperties.has('isLoading') ||
@@ -1495,7 +1533,7 @@ export class AskView extends LitElement {
         ) {
             this.renderContent();
         }
-    
+
         if (
             changedProperties.has('showTextInput') ||
             changedProperties.has('isLoading') ||
@@ -1504,7 +1542,7 @@ export class AskView extends LitElement {
         ) {
             this.adjustWindowHeightThrottled();
         }
-    
+
         if (changedProperties.has('showTextInput') && this.showTextInput) {
             this.focusTextInput();
         }

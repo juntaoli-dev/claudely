@@ -94,6 +94,7 @@ module.exports = {
     ipcMain.handle('listen:startMacosSystemAudio', async () => await listenService.handleStartMacosAudio());
     ipcMain.handle('listen:stopMacosSystemAudio', async () => await listenService.handleStopMacosAudio());
     ipcMain.handle('listen:isSessionActive', async () => await listenService.isSessionActive());
+    ipcMain.handle('listen:getState', async () => listenService.getCurrentState());
     ipcMain.handle('listen:changeSession', async (event, listenButtonText) => {
       try {
         await listenService.handleListenRequest(listenButtonText);
@@ -101,6 +102,22 @@ module.exports = {
       } catch (error) {
         return { success: false, error: error.message };
       }
+    });
+
+    // Theme — accent palette persisted in ~/.claudely/config.json. theme:set
+    // writes to config and broadcasts theme:changed to every window so the
+    // renderer-side bootstrap script can swap data-theme live, no reload.
+    const themeService = require('../features/common/services/themeService');
+    ipcMain.handle('theme:get', async () => themeService.getCurrent());
+    ipcMain.handle('theme:list', async () => themeService.list());
+    ipcMain.handle('theme:set', async (e, name) => {
+      const result = themeService.set(name);
+      BrowserWindow.getAllWindows().forEach((win) => {
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('theme:changed', result.name);
+        }
+      });
+      return result;
     });
 
     // ModelStateService

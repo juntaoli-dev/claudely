@@ -9,6 +9,7 @@ const path = require('path');
 const os = require('os');
 const { AudioBus } = require('../../audio/audioBus');
 const { TranscriptStore } = require('../transcriptStore');
+const { createInterleaver } = require('./interleaver');
 const { ClassifierBus } = require('../../classify/classifierBus');
 const { matchWake } = require('../../classify/wakePhrase');
 const { buildDispatcher, setActiveListenContext, clearActiveListenContext } = require('../../fire/instance');
@@ -136,9 +137,18 @@ function start({ onFinal, onInterim, onState } = {}) {
 
     // In mono mode: send track-0 straight through. Skip track-1 (mic).
     // In multichannel mode: interleave track-0 and track-1 into stereo PCM.
+    // The interleaver caps per-track backlog; a starved track (dead mic) is
+    // padded with silence instead of letting the other track's pending buffer
+    // grow without bound across a long session.
     const mono = process.env.CLAUDELY_STT_MONO === '1';
-    const pending = { 0: Buffer.alloc(0), 1: Buffer.alloc(0) };
     const trackBytes = { 0: 0, 1: 0 };
+    const interleaver = createInterleaver({
+        onFrame: (interleaved) => {
+            if (liveReady && !liveClosed) {
+                try { live.send(interleaved); } catch (e) { onState?.({ type: 'error', error: 'send: ' + e.message }); }
+            }
+        },
+    });
     bus.on('pcm', ({ track, pcm }) => {
         if (track !== 0 && track !== 1) return;
         trackBytes[track] += pcm.length;
@@ -151,22 +161,7 @@ function start({ onFinal, onInterim, onState } = {}) {
             return;
         }
 
-        pending[track] = Buffer.concat([pending[track], pcm]);
-        const samples = Math.min(pending[0].length, pending[1].length) / 2;
-        if (samples === 0) return;
-        const bytes = samples * 2;
-        const a = pending[0].subarray(0, bytes);
-        const b = pending[1].subarray(0, bytes);
-        pending[0] = pending[0].subarray(bytes);
-        pending[1] = pending[1].subarray(bytes);
-        const interleaved = Buffer.alloc(bytes * 2);
-        for (let i = 0; i < samples; i++) {
-            interleaved.writeInt16LE(a.readInt16LE(i * 2), i * 4);
-            interleaved.writeInt16LE(b.readInt16LE(i * 2), i * 4 + 2);
-        }
-        if (liveReady && !liveClosed) {
-            try { live.send(interleaved); } catch (e) { onState?.({ type: 'error', error: 'send: ' + e.message }); }
-        }
+        interleaver.push(track, pcm);
     });
 
     // Every 2s, emit a track byte-count snapshot so we can diagnose starvation.

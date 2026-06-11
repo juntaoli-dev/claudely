@@ -108,6 +108,25 @@ function getOrCreateActive(uid, requestedType = 'ask') {
     }
 }
 
+function getClaudeContext(id) {
+    const db = sqliteClient.getDb();
+    const row = db.prepare('SELECT claude_session_id, last_transcript_sent_ts FROM sessions WHERE id = ?').get(id);
+    if (!row) return { claudeSessionId: null, lastTranscriptSentTs: null };
+    return {
+        claudeSessionId: row.claude_session_id || null,
+        lastTranscriptSentTs: row.last_transcript_sent_ts || null,
+    };
+}
+
+function setClaudeContext(id, { claudeSessionId, lastTranscriptSentTs }) {
+    const db = sqliteClient.getDb();
+    const now = Math.floor(Date.now() / 1000);
+    const result = db.prepare(
+        'UPDATE sessions SET claude_session_id = ?, last_transcript_sent_ts = ?, updated_at = ? WHERE id = ?'
+    ).run(claudeSessionId || null, lastTranscriptSentTs || null, now, id);
+    return { changes: result.changes };
+}
+
 function endAllActiveSessions(uid) {
     const db = sqliteClient.getDb();
     const now = Math.floor(Date.now() / 1000);
@@ -134,5 +153,7 @@ module.exports = {
     updateType,
     touch,
     getOrCreateActive,
+    getClaudeContext,
+    setClaudeContext,
     endAllActiveSessions,
-}; 
+};

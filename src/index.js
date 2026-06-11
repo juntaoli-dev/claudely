@@ -41,7 +41,7 @@ process.on('unhandledRejection', (reason) => {
     console.error('[UnhandledRejection]', reason);
 });
 
-const { app, BrowserWindow, shell, ipcMain, dialog, desktopCapturer, session } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog, desktopCapturer, session, powerMonitor } = require('electron');
 const { createWindows } = require('./window/windowManager.js');
 const listenService = require('./features/listen/listenService');
 const databaseInitializer = require('./features/common/services/databaseInitializer');
@@ -230,11 +230,55 @@ app.whenReady().then(async () => {
             setTimeout(async () => {
                 try {
                     console.log('[autoListen] starting STT pipeline');
+                    const internalBridge = require('./bridge/internalBridge');
+                    internalBridge.emit('window:requestVisibility', { name: 'listen', visible: true });
                     await listenService.start();
+                    // autoListen bypasses handleListenRequest, so the header's
+                    // changeSessionResult cycle never fires. Push canonical
+                    // state to BOTH UI surfaces so the header reads Stop and
+                    // the listen pane shows the elapsed timer.
+                    listenService.broadcastCanonicalState();
                 } catch (e) {
                     console.warn('[autoListen] failed:', e.message);
                 }
             }, 1500);
+        }
+
+        // Suspend/resume hygiene. macOS suspends the Swift child along with the
+        // app, so the capture stream stops on lid close anyway. If the helper
+        // dies during suspend, capture-exit auto-restart handles it on resume.
+        // We do NOT closeSession() here — that was overkill and led to the
+        // header showing "Listen" while the listen pane still showed
+        // "Listening" because the two UI surfaces resync via different IPC
+        // channels and only one (the header) got the reconcile broadcast.
+        //
+        // What we DO need on resume/unlock: re-broadcast canonical state to
+        // BOTH the header (listen:stateReconcile) AND the listen pane
+        // (session-state-changed) so they snap back in lockstep if either
+        // drifted due to dropped IPC during suspend.
+        try {
+            const { windowPool } = require('./window/windowManager');
+            const broadcastCanonicalState = () => {
+                const state = listenService.getCurrentState();
+                const header = windowPool?.get('header');
+                const listenWindow = windowPool?.get('listen');
+                if (header && !header.isDestroyed()) {
+                    header.webContents.send('listen:stateReconcile', state);
+                }
+                if (listenWindow && !listenWindow.isDestroyed()) {
+                    listenWindow.webContents.send('session-state-changed', { isActive: state.isActive });
+                }
+            };
+            powerMonitor.on('resume', () => {
+                console.log('[powerMonitor] resume — broadcasting canonical state');
+                broadcastCanonicalState();
+            });
+            powerMonitor.on('unlock-screen', () => {
+                console.log('[powerMonitor] unlock-screen — broadcasting canonical state');
+                broadcastCanonicalState();
+            });
+        } catch (e) {
+            console.warn('[powerMonitor] wiring failed:', e.message);
         }
 
         // Warm calendar cache in the background so manual asks never wait

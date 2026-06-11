@@ -52,6 +52,9 @@ const sessionRepositoryAdapter = {
         const uid = getAuthService().getCurrentUserId();
         return getBaseRepository().endAllActiveSessions(uid);
     },
+
+    getClaudeContext: (id) => getBaseRepository().getClaudeContext(id),
+    setClaudeContext: (id, ctx) => getBaseRepository().setClaudeContext(id, ctx),
 };
 
 module.exports = sessionRepositoryAdapter; 

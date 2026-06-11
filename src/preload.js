@@ -115,12 +115,15 @@ contextBridge.exposeInMainWorld('api', {
     // Generic invoke (for dynamic channel names)
     // invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
     sendListenButtonClick: (listenButtonText) => ipcRenderer.invoke('listen:changeSession', listenButtonText),
+    getListenState: () => ipcRenderer.invoke('listen:getState'),
     sendAskButtonClick: () => ipcRenderer.invoke('ask:toggleAskButton'),
     sendToggleAllWindowsVisibility: () => ipcRenderer.invoke('shortcut:toggleAllWindowsVisibility'),
-    
+
     // Listeners
     onListenChangeSessionResult: (callback) => ipcRenderer.on('listen:changeSessionResult', callback),
     removeOnListenChangeSessionResult: (callback) => ipcRenderer.removeListener('listen:changeSessionResult', callback),
+    onListenStateReconcile: (callback) => ipcRenderer.on('listen:stateReconcile', callback),
+    removeOnListenStateReconcile: (callback) => ipcRenderer.removeListener('listen:stateReconcile', callback),
     onShortcutsUpdated: (callback) => ipcRenderer.on('shortcuts-updated', callback),
     removeOnShortcutsUpdated: (callback) => ipcRenderer.removeListener('shortcuts-updated', callback)
   },
@@ -158,6 +161,13 @@ contextBridge.exposeInMainWorld('api', {
     removeOnAskStateUpdate: (callback) => ipcRenderer.removeListener('ask:stateUpdate', callback),
     onCodeContextUpdate: (callback) => ipcRenderer.on('ai-context-updated', callback),
     removeOnCodeContextUpdate: (callback) => ipcRenderer.removeListener('ai-context-updated', callback),
+
+    // Listen STT restarted (capture-exit auto-restart, device-route change,
+    // user Listen-button cycle). AskView clears its turnHistory because the
+    // resumable Claude session id was wiped — prior bubbles no longer share
+    // context with new asks, so showing them is misleading.
+    onListenSessionReset: (callback) => ipcRenderer.on('listen:sessionReset', callback),
+    removeOnListenSessionReset: (callback) => ipcRenderer.removeListener('listen:sessionReset', callback),
 
     onAskStreamError: (callback) => ipcRenderer.on('ask-response-stream-error', callback),
     removeOnAskStreamError: (callback) => ipcRenderer.removeListener('ask-response-stream-error', callback),
@@ -313,5 +323,17 @@ contextBridge.exposeInMainWorld('api', {
     // Listeners
     onChangeListenCaptureState: (callback) => ipcRenderer.on('change-listen-capture-state', callback),
     removeOnChangeListenCaptureState: (callback) => ipcRenderer.removeListener('change-listen-capture-state', callback)
-  }
+  },
+
+  // UI theme (accent palette). Driven by ~/.claudely/config.json `theme`.
+  // Bootstrap reads via theme.get(); the SettingsView picker writes via
+  // theme.set() which broadcasts theme:changed to every window for live
+  // re-tinting without a relaunch.
+  theme: {
+    get: () => ipcRenderer.invoke('theme:get'),
+    set: (name) => ipcRenderer.invoke('theme:set', name),
+    list: () => ipcRenderer.invoke('theme:list'),
+    onChanged: (callback) => ipcRenderer.on('theme:changed', callback),
+    removeOnChanged: (callback) => ipcRenderer.removeListener('theme:changed', callback),
+  },
 });

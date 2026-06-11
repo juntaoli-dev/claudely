@@ -32,9 +32,18 @@ class Config {
             enableDebugLogging: false,
 
             // Claudely runtime config
-            // Auto-start Listen pipeline on launch (Cluely-style always-on).
-            // Set to false to require an explicit Listen click.
-            autoListen: true,
+            // Auto-start Listen pipeline on launch. Default OFF — surprised
+            // users by burning Deepgram + Claude budget on every launch even
+            // when they hadn't asked to record. Set to true in
+            // ~/.claudely/config.json to opt back in to Cluely-style
+            // always-on behaviour.
+            autoListen: false,
+
+            // UI theme. One of: default, pink, mint, amber, purple, red.
+            // See src/features/common/services/themeService.js + the
+            // :root[data-theme="..."] blocks in the renderer HTML.
+            theme: 'pink',
+
             autoAnswer: false,
             wakePhrases: ['hey codex', 'hey claude', 'hey claudely'],
             projectCwd: path.join(os.homedir(), 'Documents/creative_studio_repo'),

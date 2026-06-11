@@ -95,10 +95,54 @@ struct AudioCapture {
             }
         }
 
+        // SCK binds to the current default output device and AVCaptureSession to
+        // the current default input device. Both keep capturing from the OLD
+        // device when the user switches (e.g. plugs in AirPods mid-meeting),
+        // silently dropping audio. Watch the default-device properties; when
+        // either changes, exit with code 75 so the Node side respawns us
+        // cleanly against the new routing. Exit code 75 is treated as a free
+        // restart (no budget consumption) by listenService.
+        DeviceRouteWatcher.install()
+
         // Keep async main alive indefinitely so the SCStream delegate keeps
         // receiving audio. dispatchMain() does not play well with the Swift
         // concurrency runtime under @main async.
         try await Task.sleep(nanoseconds: UInt64.max)
+    }
+}
+
+enum DeviceRouteWatcher {
+    static var armed = false
+
+    static func install() {
+        let selectors: [AudioObjectPropertySelector] = [
+            kAudioHardwarePropertyDefaultOutputDevice,
+            kAudioHardwarePropertyDefaultInputDevice,
+        ]
+        for sel in selectors {
+            var addr = AudioObjectPropertyAddress(
+                mSelector: sel,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            let status = AudioObjectAddPropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject),
+                &addr,
+                DispatchQueue.main
+            ) { _, _ in
+                guard armed else { return }
+                FileHandle.standardError.write(
+                    "INFO: default audio device changed (sel=\(sel)), exiting for clean restart\n".data(using: .utf8)!
+                )
+                exit(75)
+            }
+            if status != noErr {
+                FileHandle.standardError.write("WARN: AddPropertyListener failed sel=\(sel) status=\(status)\n".data(using: .utf8)!)
+            }
+        }
+        // Arm after a short delay so startup-time settling doesn't trip an
+        // immediate exit before we've even emitted any samples.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { armed = true }
     }
 }
 

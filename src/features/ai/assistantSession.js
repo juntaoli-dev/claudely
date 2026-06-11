@@ -23,13 +23,12 @@ class AssistantSession {
         this.claude = claudeSession || new ClaudeSession({ cwd, model: claudeModel || null });
     }
 
-    async ask({ question, transcriptTail, imagePath, onDelta, onEvent }) {
+    async ask({ question, transcriptTail, imagePath, onDelta, onEvent, resumeSessionId = null, isFirstAsk = true }) {
         const errors = [];
 
         if (this.prefer !== 'claude') {
             try {
-                await this.codex.ask({ question, transcriptTail, imagePath, onDelta, onEvent });
-                return;
+                return await this.codex.ask({ question, transcriptTail, imagePath, onDelta, onEvent });
             } catch (error) {
                 errors.push(`Codex: ${error.message}`);
                 onEvent?.({
@@ -49,10 +48,12 @@ class AssistantSession {
 
         try {
             const isFallback = this.prefer !== 'claude';
-            await this.claude.ask({
+            return await this.claude.ask({
                 question,
                 transcriptTail,
                 imagePath,
+                resumeSessionId,
+                isFirstAsk,
                 onDelta,
                 onEvent: (event) => {
                     if (event?.kind === 'provider' && isFallback) {

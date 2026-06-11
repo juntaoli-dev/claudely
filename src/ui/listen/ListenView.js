@@ -114,15 +114,27 @@ export class ListenView extends LitElement {
 .hljs-tag {
     color: #7dd3fc !important;
 }
+        /* Liquid-glass — see AskView for the design pattern. */
         .assistant-container {
             display: flex;
             flex-direction: column;
             color: #ffffff;
             box-sizing: border-box;
             position: relative;
-            background: rgba(0, 0, 0, 0.6);
+            background:
+                linear-gradient(
+                    180deg,
+                    rgba(var(--accent-rgb, 236, 72, 153), 0.16) 0%,
+                    rgba(20, 20, 24, 0.55) 70%
+                );
+            backdrop-filter: blur(42px) saturate(180%);
+            -webkit-backdrop-filter: blur(42px) saturate(180%);
+            box-shadow:
+                0 12px 40px rgba(0, 0, 0, 0.45),
+                inset 0 1px 0 rgba(255, 255, 255, 0.18);
             overflow: hidden;
-            border-radius: 12px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.16);
             width: 100%;
             height: 100%;
         }
@@ -130,13 +142,15 @@ export class ListenView extends LitElement {
         .assistant-container::after {
             content: '';
             position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            border-radius: 12px;
+            inset: 0;
+            border-radius: 16px;
             padding: 1px;
-            background: linear-gradient(169deg, rgba(255, 255, 255, 0.17) 0%, rgba(255, 255, 255, 0.08) 50%, rgba(255, 255, 255, 0.17) 100%);
+            background: linear-gradient(
+                160deg,
+                rgba(var(--accent-rgb, 236, 72, 153), 0.45) 0%,
+                rgba(255, 255, 255, 0.18) 50%,
+                rgba(var(--accent-rgb, 236, 72, 153), 0.35) 100%
+            );
             -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
             -webkit-mask-composite: destination-out;
             mask-composite: exclude;
@@ -149,13 +163,15 @@ export class ListenView extends LitElement {
             top: 0;
             left: 0;
             right: 0;
-            bottom: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.15);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            border-radius: 12px;
-            z-index: -1;
+            height: 35%;
+            background: linear-gradient(
+                180deg,
+                rgba(255, 255, 255, 0.10) 0%,
+                rgba(255, 255, 255, 0) 100%
+            );
+            pointer-events: none;
+            border-radius: 16px 16px 0 0;
+            z-index: 0;
         }
 
         .top-bar {

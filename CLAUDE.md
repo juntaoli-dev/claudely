@@ -76,21 +76,14 @@ Concretely:
 ## GitHub push gate (non-negotiable)
 
 The user runs this project from multiple places and expects GitHub to be the
-source of truth. After any verified code, docs, build, or app-behavior change:
+source of truth. This is a solo dev project: NEVER open a pull request, not
+even a draft (user directive 2026-06-11). After any verified code, docs,
+build, or app-behavior change:
 
-1. Commit the intended repo changes on the current feature branch. If on
-   `main`, create a `claude/<description>` branch first.
-2. Push the branch to `origin` before returning.
-3. If there is already a PR for the branch, leave it updated. If there is no
-   PR, open a draft PR against `main`.
-4. Never end with local-only changes unless pushing is genuinely impossible;
+1. Commit the intended repo changes directly on `main`.
+2. Push `main` to `origin` before returning.
+3. Never end with local-only changes unless pushing is genuinely impossible;
    in that case, say exactly why and what command failed.
-
-Future task to investigate (do not ignore in passing): the supervisor's
-auto-restart in `listenService.handleListenRequest`'s `capture-exit` branch
-fires *during* graceful shutdown when `app.on('before-quit')` kills the
-Swift child. The restart races with shutdown teardown. Not part of the
-long-session CPU fix but worth gating on a `this._shuttingDown` flag.
 
 If the e2e test fails, the change is not done — debug and fix, do not return
 to the prompter with "should work" energy.

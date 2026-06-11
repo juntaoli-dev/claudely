@@ -2,7 +2,7 @@
     "name": "claudely",
     "productName": "Claudely",
     "version": "0.1.0",
-    "description": "Repo-aware meeting assistant powered by Claude",
+    "description": "Repo-aware meeting assistant powered by local Codex CLI with Claude fallback",
     "main": "src/index.js",
     "scripts": {
         "setup": "npm install && cd web && npm install && npm run build && cd .. && npm start",

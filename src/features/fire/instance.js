@@ -9,25 +9,44 @@ const path = require('path');
 const { desktopCapturer } = require('electron');
 const { FireDispatcher } = require('./fireDispatcher');
 const { ScreenGrabber } = require('./screenGrabber');
-const { ClaudeSession } = require('../claude/claudeSession');
+const { AssistantSession } = require('../ai/assistantSession');
 const config = require('../common/config/config');
+const contextService = require('../context/contextService');
 
 let sharedGrabber = null;
-let sharedClaude = null;
+let sharedAssistant = null;
 
 function getGrabber() {
     if (!sharedGrabber) sharedGrabber = new ScreenGrabber({ capturer: desktopCapturer });
     return sharedGrabber;
 }
 
-function getClaude() {
-    if (!sharedClaude) {
-        sharedClaude = new ClaudeSession({
-            cwd: process.env.CLAUDELY_PROJECT_CWD || config.get('projectCwd'),
-            model: process.env.CLAUDELY_MODEL || config.get('model'),
+function getAssistant() {
+    if (!sharedAssistant) {
+        const context = contextService.getActiveContext();
+        sharedAssistant = new AssistantSession({
+            cwd: context.cwd,
+            codexModel: process.env.CLAUDELY_CODEX_MODEL || config.get('codexModel') || null,
+            claudeModel: process.env.CLAUDELY_CLAUDE_MODEL || process.env.CLAUDELY_MODEL || config.get('claudeModel') || config.get('model'),
         });
+        console.log(`[AI Context] Assistant session ready in ${context.cwd}`);
     }
-    return sharedClaude;
+    return sharedAssistant;
+}
+
+function resetAssistant() {
+    sharedAssistant = null;
+}
+
+contextService.on('changed', ({ active }) => {
+    resetAssistant();
+    console.log(`[AI Context] Switched to ${active.cwd}; next ask will use a fresh assistant session.`);
+});
+
+function getAssistantProxy() {
+    return {
+        ask: (args) => getAssistant().ask(args),
+    };
 }
 
 // Active listen context: sttService sets these on listen:start, clears on stop.
@@ -88,7 +107,7 @@ function buildDispatcher({ store, classifier, onState }) {
         store: store || activeStore || { tail: () => '' },
         classifier: classifier || activeClassifier || { classify: async () => ({ addressed: false, question: null }) },
         grabber: getGrabber(),
-        claude: getClaude(),
+        assistant: getAssistantProxy(),
         config,
         onState: onState || (() => {}),
         claudeContextProvider: buildClaudeContextProvider(),
@@ -108,6 +127,7 @@ module.exports = {
     clearActiveListenContext,
     getActiveStore,
     getActiveClassifier,
+    resetAssistant,
     getActiveListenSessionId,
     updateActiveListenSessionId,
 };

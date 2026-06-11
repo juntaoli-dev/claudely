@@ -57,6 +57,8 @@ class ClaudeSession {
   }
 
   async ask({ question, transcriptTail, imagePath, onDelta, onEvent, resumeSessionId = null, isFirstAsk = true }) {
+    onEvent?.({ kind: 'provider', provider: { id: 'claude', name: 'Claude Code', status: 'running' } });
+
     if (process.env.ANTHROPIC_DRY_RUN === '1') {
       const payload = JSON.stringify({ question, transcriptTail, imagePath, resumeSessionId, isFirstAsk });
       console.log('[DRY-RUN]', payload);

@@ -281,10 +281,10 @@ let tokenTracker = {
     },
 };
 
-// Track audio tokens every few seconds
-setInterval(() => {
-    tokenTracker.trackAudioTokens();
-}, 2000);
+// Token tracker timer is started in startCapture() and cleared in stopCapture().
+// Previously it ran at module-load forever, so a renderer that survived 100 capture
+// cycles still woke every 2s to recompute audio token rates against an idle session.
+let _tokenTrackerInterval = null;
 
 // ---------------------------
 // Audio processing functions (exact from renderer.js)
@@ -419,6 +419,9 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
     // Reset token tracker when starting new capture session
     tokenTracker.reset();
     console.log('🎯 Token tracker reset for new capture session');
+    if (!_tokenTrackerInterval) {
+        _tokenTrackerInterval = setInterval(() => tokenTracker.trackAudioTokens(), 2000);
+    }
 
     try {
         if (isMacOS) {
@@ -572,6 +575,11 @@ async function startCapture(screenshotIntervalSeconds = 5, imageQuality = 'mediu
 }
 
 function stopCapture() {
+    if (_tokenTrackerInterval) {
+        clearInterval(_tokenTrackerInterval);
+        _tokenTrackerInterval = null;
+    }
+
     // Clean up microphone resources
     if (audioProcessor) {
         audioProcessor.disconnect();

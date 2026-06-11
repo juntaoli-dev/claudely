@@ -1,4 +1,4 @@
-// Stubbed: Claudely uses Claude Agent SDK, wired in Phase 1. No provider-key UI.
+// Stubbed: Claudely uses local CLI assistants, no provider-key UI.
 const { EventEmitter } = require('events');
 
 class ModelStateService extends EventEmitter {

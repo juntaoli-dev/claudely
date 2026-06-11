@@ -11,6 +11,7 @@ const sttRepository = require('./stt/repositories');
 const internalBridge = require('../../bridge/internalBridge');
 
 const IDLE_PROMPT_MS = Number(process.env.CLAUDELY_IDLE_PROMPT_MS) || 60 * 60 * 1000; // 1 hour
+const SUMMARY_SHUTDOWN_WAIT_MS = Number(process.env.CLAUDELY_SUMMARY_SHUTDOWN_WAIT_MS) || 240_000;
 // Separate "no speech detected" guard: meeting ended but the helper is still
 // piping silence to Deepgram (Deepgram emits no transcripts on pure silence,
 // so byte-counters keep climbing but nothing useful happens). Prompt the user
@@ -40,6 +41,8 @@ class ListenService {
         this.isInitializing = false;
         this.idleTimer = null;
         this.sessionStartedAt = null;
+        this._stoppingCapture = false;
+        this._shuttingDown = false;
         // Restart-attempt accounting. If the Swift audio-capture helper keeps
         // dying (TCC denied, dead binary, kernel oom), we'd otherwise respawn
         // it forever — every loop allocates a fresh child process + Deepgram
@@ -48,6 +51,7 @@ class ListenService {
         // unkillable app. We give up after MAX in WINDOW_MS.
         this._restartAttempts = [];   // ms timestamps
         this._restartGiveUp = false;
+        this._summaryJobs = new Set();
         // User-initiated stop must not race with the capture-exit auto-restart.
         // Without this flag: user clicks Stop → closeSession() kills the Swift
         // child → bus emits 'exit' → setTimeout(start, delay) fires → fresh
@@ -216,6 +220,47 @@ class ListenService {
 
     async initialize() {}
 
+    _trackSummaryJob(job, label = 'summary') {
+        const tracked = Promise.resolve(job)
+            .catch((e) => {
+                console.warn(`[ListenService] ${label} failed:`, e.message);
+            })
+            .finally(() => {
+                this._summaryJobs.delete(tracked);
+            });
+        this._summaryJobs.add(tracked);
+        return tracked;
+    }
+
+    pendingSummaryCount() {
+        return this._summaryJobs.size;
+    }
+
+    async waitForPendingSummaries({ timeoutMs = SUMMARY_SHUTDOWN_WAIT_MS } = {}) {
+        const jobs = Array.from(this._summaryJobs);
+        if (!jobs.length) return { completed: true, count: 0 };
+
+        console.log(`[ListenService] waiting for ${jobs.length} pending summary job(s) before shutdown`);
+        let timeout;
+        const timeoutPromise = new Promise((resolve) => {
+            timeout = setTimeout(() => resolve({ timedOut: true }), Math.max(1, timeoutMs));
+        });
+
+        const result = await Promise.race([
+            Promise.allSettled(jobs).then(() => ({ timedOut: false })),
+            timeoutPromise,
+        ]);
+        clearTimeout(timeout);
+
+        if (result.timedOut) {
+            console.warn(`[ListenService] summary wait timed out after ${Math.round(timeoutMs / 1000)}s; continuing shutdown`);
+            return { completed: false, count: jobs.length };
+        }
+
+        console.log('[ListenService] pending summary jobs completed');
+        return { completed: true, count: jobs.length };
+    }
+
     async handleListenRequest(listenButtonText) {
         const { windowPool } = require('../../window/windowManager');
         const listenWindow = windowPool?.get('listen');
@@ -263,6 +308,7 @@ class ListenService {
         if (this.active) return;
         if (this.isInitializing) return;
         this.isInitializing = true;
+        this._stoppingCapture = false;
         // Manual or initial start clears the give-up flag and the rolling
         // attempt window so a fresh user-driven session gets a clean budget.
         this._restartGiveUp = false;
@@ -334,6 +380,7 @@ class ListenService {
                 onState: (s) => {
                     if (s.type === 'listening') this.sendToRenderer('update-status', 'Listening…');
                     else if (s.type === 'error') this.sendToRenderer('update-status', `ERR: ${s.error}`);
+                    else if (s.type === 'provider') this.sendToRenderer('ai-provider-update', s.provider);
                     else if (s.type === 'stderr') console.warn('[ListenService][stderr]', s.text.trim());
                     else if (s.type === 'capture-exit') {
                         // Swift audio-capture helper died (codesign hiccup,
@@ -348,11 +395,33 @@ class ListenService {
                         this.active = null;
                         try { wasActive?.stop?.(); } catch (_) {}
 
+                        if (this._shuttingDown || this._stoppingCapture) {
+                            console.log(`[ListenService] capture exited during ${this._shuttingDown ? 'shutdown' : 'intentional stop'} — not restarting`);
+                            this._stoppingCapture = false;
+                            this.sendToRenderer('update-status', this._shuttingDown ? 'Shutting down' : 'Stopped');
+                            this.sendToRenderer('session-state-changed', { isActive: false });
+                            this.sendToRenderer('change-listen-capture-state', { status: 'stop' });
+                            return;
+                        }
+
                         // User clicked Stop. closeSession() killed the child;
                         // the resulting exit must NOT auto-restart and resurrect
                         // the session under the user's feet.
                         if (this._userStopRequested) {
                             console.log('[ListenService] capture exited after user stop; not restarting');
+                            return;
+                        }
+
+                        // Exit code 64 = source app (Zoom/Meet/Teams) quit. The
+                        // user's meeting is over, so don't auto-restart against
+                        // a closed app — that's exactly the failure mode that
+                        // pegged main at 88% CPU overnight. End the session.
+                        if (code === 64) {
+                            console.log('[ListenService] source app quit — ending listen session');
+                            this.sendToRenderer('update-status', 'Meeting ended — listen stopped');
+                            this.sendToRenderer('session-state-changed', { isActive: false });
+                            this.sendToRenderer('change-listen-capture-state', { status: 'stop' });
+                            this.closeSession().catch((e) => console.warn('[ListenService] auto-close failed:', e.message));
                             return;
                         }
 
@@ -466,13 +535,15 @@ class ListenService {
         };
     }
 
-    async closeSession() {
+    async closeSession({ waitForSummary = false, shutdown = false } = {}) {
+        if (shutdown) this._shuttingDown = true;
         // Idempotent: if there's nothing to clean up, skip cleanly so a
         // double-Stop click is a no-op. We DO proceed when isInitializing is
         // true even with no active yet — that's the mid-init race the
         // tail-end check in start() relies on (_userStopRequested must be
         // visible by the time start() returns).
         if (!this.active && !this.currentSessionId && !this.idleTimer && !this._audioIdleTimer && !this.isInitializing) {
+            if (waitForSummary) await this.waitForPendingSummaries();
             return { success: true };
         }
         this._cancelIdlePrompt();
@@ -485,12 +556,19 @@ class ListenService {
         this.sessionStartedAt = null;
         this.sendToRenderer('change-listen-capture-state', { status: 'stop' });
         const finishedStore = this.active?.store || null;
+        const hadActiveCapture = !!this.active;
+        if (hadActiveCapture) this._stoppingCapture = true;
         try {
             this.active?.stop();
         } catch (e) {
             console.warn('[ListenService] stop error:', e.message);
         }
         this.active = null;
+        if (hadActiveCapture) {
+            setTimeout(() => {
+                if (!this._shuttingDown) this._stoppingCapture = false;
+            }, 2_000);
+        }
         // Canonical broadcast — renderer is now race-free without the
         // legacy cycle, so always sync. Critical for non-click paths like
         // the idle-prompt-pause action where the header has no other way
@@ -514,13 +592,20 @@ class ListenService {
         } catch (_) {}
 
         // Fire-and-forget the sidecar pipeline. Errors surface in console
-        // only; the user-facing stop is already done.
-        this._finishSessionAsync({
+        // only; the user-facing stop is already done. Shutdown is the one
+        // caller that awaits: Codex CLI summaries take long enough that
+        // app.exit() would otherwise kill them mid-write.
+        const sidecarDone = this._finishSessionAsync({
             finishedStore,
             recordedFrom,
             recordedTo,
             sessionIdAtClose,
         });
+
+        if (waitForSummary) {
+            await sidecarDone;
+            await this.waitForPendingSummaries();
+        }
 
         return { success: true };
     }
@@ -544,7 +629,7 @@ class ListenService {
             console.log(`[ListenService] skipping sidecar — session too short (${durationMs}ms < ${MIN_SESSION_MS}ms threshold)`);
             return;
         }
-        (async () => {
+        return (async () => {
             try {
             const path = require('path');
             const fs = require('fs');
@@ -636,6 +721,22 @@ class ListenService {
                     recorded_to: recordedTo.toISOString(),
                     duration_ms: recordedFrom ? (recordedTo - recordedFrom) : null,
                     session_id: sessionIdAtClose || null,
+                    code_context: (() => {
+                        try {
+                            return require('../context/contextService').getActiveContext();
+                        } catch (_) {
+                            return null;
+                        }
+                    })(),
+                    context_switches: (() => {
+                        try {
+                            return recordedFrom
+                                ? require('../context/contextService').getSwitchesBetween(recordedFrom, recordedTo)
+                                : [];
+                        } catch (_) {
+                            return [];
+                        }
+                    })(),
                     events: events.map((e) => ({
                         title: e.title,
                         start: e.start,
@@ -656,15 +757,14 @@ class ListenService {
                 fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
                 console.log(`[ListenService] meta sidecar → ${metaPath} (${events.length} event(s), ${qa.length} qa msg, ${screenshotsCopied.length} shot(s))`);
 
-                // Fire-and-forget Claude-generated summary. Runs in the
-                // background so closeSession() returns immediately; the .md
-                // lands next to the transcript when ready (typically 15-60s),
-                // and if Drive webhook is configured, also gets uploaded as a
-                // real Google Doc into the Meeting Summary folder.
+                // Assistant-generated summary. Normal Stop keeps this in the
+                // background so UI control returns immediately, but shutdown
+                // waits on tracked jobs because Codex CLI summaries often take
+                // long enough that app.exit() would otherwise kill them.
                 // Disable with CLAUDELY_DISABLE_SUMMARY=1 for tests / debugging.
                 if (process.env.CLAUDELY_DISABLE_SUMMARY !== '1') {
                     const summaryPath = path.join(dst, `${baseName}.summary.md`);
-                    (async () => {
+                    const summaryJob = this._trackSummaryJob((async () => {
                         try {
                             const { Summarizer } = require('../summary/summarizer');
                             const summarizer = new Summarizer();
@@ -697,7 +797,8 @@ class ListenService {
                         } catch (e) {
                             console.warn('[ListenService] summary upload failed:', e.message);
                         }
-                    })();
+                    })(), `summary ${baseName}`);
+                    void summaryJob; // tracked in _summaryJobs; shutdown awaits via waitForPendingSummaries
                 }
             }
             } catch (e) {
@@ -716,3 +817,4 @@ class ListenService {
 const listenService = new ListenService();
 module.exports = listenService;
 module.exports.ListenService = ListenService;
+module.exports.SUMMARY_SHUTDOWN_WAIT_MS = SUMMARY_SHUTDOWN_WAIT_MS;

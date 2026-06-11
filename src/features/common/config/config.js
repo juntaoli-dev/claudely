@@ -45,11 +45,14 @@ class Config {
             theme: 'pink',
 
             autoAnswer: false,
-            wakePhrases: ['hey claude', 'hey claudely'],
+            wakePhrases: ['hey codex', 'hey claude', 'hey claudely'],
             projectCwd: path.join(os.homedir(), 'Documents/creative_studio_repo'),
+            recentProjectCwds: [],
             deepgramApiKey: '',
-            // Empty/null means: defer to the local `claude` CLI's configured
-            // model (Enterprise auth carries the user's selection).
+            // Empty/null means: defer to each local CLI's configured model.
+            codexModel: '',
+            claudeModel: '',
+            // Legacy model override kept for old ~/.claudely/config.json files.
             model: '',
             zoomBundleId: 'us.zoom.xos',
             // When non-empty, listenService copies the per-session transcript

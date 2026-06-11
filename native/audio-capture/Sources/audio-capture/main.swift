@@ -2,6 +2,13 @@ import Foundation
 import AVFoundation
 import ScreenCaptureKit
 import CoreAudio
+import AppKit
+
+// Sentinel exit code returned when the bundle we were filtering on (Zoom, Meet,
+// Teams, …) quits or stops running. listenService treats this code specially:
+// instead of auto-restarting the capture, it ends the listen session so we
+// don't keep an idle Deepgram socket + Swift process burning CPU all night.
+let SOURCE_QUIT_EXIT: Int32 = 64
 
 // Protocol: length-prefixed frames on stdout.
 // Frame format: [UInt32 BE length][UInt8 track (0=them,1=me)][Int16 LE PCM samples @16kHz mono]
@@ -68,6 +75,25 @@ struct AudioCapture {
         // Also tap mic on a background task as track 1. Failures are non-fatal;
         // keep the process alive for SCK delegate callbacks.
         Task.detached { try? MicCapture.run(track: 1) }
+
+        // If we found a target app at startup, watch for it quitting. NSWorkspace
+        // notifications need a runloop and the @main async helper doesn't have
+        // one wired, so just poll runningApplications(withBundleIdentifier:)
+        // every few seconds. Once the app is gone we exit with SOURCE_QUIT_EXIT
+        // so the JS supervisor can tear the listen session down cleanly instead
+        // of restarting us against a closed app forever.
+        if target != nil {
+            Task.detached {
+                while true {
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+                    if running.isEmpty {
+                        FileHandle.standardError.write("INFO: source-quit \(bundleID) — exiting\n".data(using: .utf8)!)
+                        exit(SOURCE_QUIT_EXIT)
+                    }
+                }
+            }
+        }
 
         // SCK binds to the current default output device and AVCaptureSession to
         // the current default input device. Both keep capturing from the OLD

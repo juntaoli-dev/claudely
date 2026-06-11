@@ -3,7 +3,7 @@
 ## Prereqs
 - macOS 15+ with Apple Intelligence enabled (for FoundationModels classifier; otherwise the regex fallback is used).
 - Zoom installed and signed in.
-- `claude` CLI logged in to the Enterprise account (`claude --version` works; credentials live in Keychain or `~/.claude/.credentials.json`).
+- `codex` CLI logged in with ChatGPT subscription auth. `claude` CLI logged in as fallback.
 - `DEEPGRAM_API_KEY` exported in the shell that runs `npm start`.
 - `~/Documents/creative_studio_repo/` exists and contains the Alli sub-repos.
 - Screen Recording **and** Microphone TCC permissions granted to the host app
@@ -24,25 +24,31 @@ npm run build:renderer  # esbuild + copies native binaries into src/ui/assets/bi
 4. In Claudely, press `Cmd+Shift+A` to enable auto-answer. Badge goes ON.
 5. Expected: transcript line shows `them-0: does our auth service handle SSO`, then Claudely enters THINKING, then streams an answer that references files in `alli-creativestudio-backend`.
 6. Press `Cmd+Enter`, type `list the subfolders`. Expected: streamed list of sub-repos.
-7. Say aloud "hey claude what is in the frontend repo". Expected: auto-fires regardless of auto-answer state, labelled `me:`.
+7. Say aloud "hey codex what is in the frontend repo". Expected: auto-fires regardless of auto-answer state, labelled `me:`.
 8. Verify Claudely invisible: share your screen in Zoom to a second device. The Claudely overlay should not appear in the share.
 9. Press `Cmd+Shift+M` to panic-mute. All capture stops.
 
 ## Headless smoke (no UI clicking, useful in CI / dev)
 - `CLAUDELY_DEBUG_AUDIO=us.zoom.xos npm start` — spawns the Swift helper, logs the first 200 PCM frames, exits.
 - `CLAUDELY_DEBUG_STT=1 CLAUDELY_DEBUG_STT_MS=20000 DEEPGRAM_API_KEY=… npm start` — runs the full STT pipeline for 20 s and prints diarized finals + interims to stdout.
-- `CLAUDELY_DEBUG_ASK="list the subfolders" npm start` — fires `manualFire` through the FireDispatcher (screenshot + transcript tail + ClaudeSession) and exits when done.
-- `ANTHROPIC_DRY_RUN=1` — skips the real Claude SDK call; ClaudeSession prints `[DRY-RUN] {...}` and returns.
+- `CLAUDELY_DEBUG_ASK="list the subfolders" npm start` — fires `manualFire` through the FireDispatcher (screenshot + transcript tail + Codex-first assistant) and exits when done.
+- `CODEX_DRY_RUN=1` — skips the real Codex CLI call and returns a Codex-labelled dry-run answer.
+- `ANTHROPIC_DRY_RUN=1` — skips the real Claude SDK call when fallback is active.
 
 ## Env knobs
 | Env | Purpose |
 |---|---|
 | `DEEPGRAM_API_KEY` | Required for STT. |
 | `CLAUDELY_PROJECT_CWD` | Override the Agent SDK `cwd` (default `~/Documents/creative_studio_repo`). |
-| `CLAUDELY_MODEL` | Override Claude model (default `claude-sonnet-4-6`). |
+| `CLAUDELY_CODEX_MODEL` | Override Codex model. Empty means use Codex CLI default. |
+| `CLAUDELY_CLAUDE_MODEL` | Override Claude fallback model. |
+| `CLAUDELY_MODEL` | Legacy Claude fallback model override. |
 | `CLAUDELY_ZOOM_BUNDLE_ID` | SCK app filter (default `us.zoom.xos`). Bogus value forces full-display audio. |
 | `CLAUDELY_STT_MONO` | `1` forces mono Deepgram channel; default is multichannel stereo (mic = ch1). |
 | `CLAUDELY_DISABLE_CP` | `1` turns off `setContentProtection` so screen-record tools can capture the overlay (dev only). |
+| `CLAUDELY_DISABLE_CLAUDE_FALLBACK` | `1` reports Codex failures directly instead of falling back to Claude. |
+| `CLAUDELY_AI_PROVIDER` | `claude` forces Claude-first debugging. Default is Codex-first. |
+| `CODEX_DRY_RUN` | `1` short-circuits CodexSession.ask. |
 | `ANTHROPIC_DRY_RUN` | `1` short-circuits ClaudeSession.ask. |
 
 ## Known limitations

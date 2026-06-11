@@ -17,6 +17,9 @@ module.exports = {
     ipcMain.handle('settings:get-auto-update', async () => await settingsService.getAutoUpdateSetting());
     ipcMain.handle('settings:set-auto-update', async (event, isEnabled) => await settingsService.setAutoUpdateSetting(isEnabled));
     ipcMain.handle('settings:get-model-settings', async () => await settingsService.getModelSettings());
+    ipcMain.handle('settings:get-code-context', async () => await settingsService.getCodeContext());
+    ipcMain.handle('settings:set-code-context', async (event, { cwd }) => await settingsService.setCodeContext(cwd));
+    ipcMain.handle('settings:choose-code-context-folder', async () => await settingsService.chooseCodeContextFolder());
     ipcMain.handle('settings:clear-api-key', async (e, { provider }) => await settingsService.clearApiKey(provider));
     ipcMain.handle('settings:set-selected-model', async (e, { type, modelId }) => await settingsService.setSelectedModel(type, modelId));
 

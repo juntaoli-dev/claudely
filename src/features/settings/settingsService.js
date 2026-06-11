@@ -1,4 +1,4 @@
-const { ipcMain, BrowserWindow } = require('electron');
+const { ipcMain, BrowserWindow, dialog } = require('electron');
 const Store = require('electron-store');
 const authService = require('../common/services/authService');
 const settingsRepository = require('./repositories');
@@ -6,6 +6,7 @@ const { getStoredApiKey, getStoredProvider, windowPool } = require('../../window
 
 // New imports for common services
 const modelStateService = require('../common/services/modelStateService');
+const contextService = require('../context/contextService');
 
 const store = new Store({
     name: 'claudely-settings',
@@ -157,6 +158,13 @@ class WindowNotificationManager {
 
 // Global instance
 const windowNotificationManager = new WindowNotificationManager();
+
+contextService.on('changed', (payload) => {
+    windowNotificationManager.notifyRelevantWindows('ai-context-updated', payload, {
+        windowTypes: ['settings', 'ask', 'listen', 'main'],
+        debounce: 0,
+    });
+});
 
 // Default keybinds configuration
 const DEFAULT_KEYBINDS = {
@@ -414,6 +422,54 @@ async function setAutoUpdateSetting(isEnabled) {
     }
 }
 
+async function getCodeContext() {
+    try {
+        return { success: true, data: contextService.getState() };
+    } catch (error) {
+        console.error('[SettingsService] Error getting code context:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+async function setCodeContext(cwd) {
+    try {
+        const data = contextService.setActiveContext(cwd, { source: 'settings' });
+        if (!data.changed) {
+            windowNotificationManager.notifyRelevantWindows('ai-context-updated', data, {
+                windowTypes: ['settings', 'ask', 'listen', 'main'],
+                debounce: 0,
+            });
+        }
+        return { success: true, data };
+    } catch (error) {
+        console.error('[SettingsService] Error setting code context:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+async function chooseCodeContextFolder() {
+    try {
+        const active = contextService.getActiveContext();
+        const focused = BrowserWindow.getFocusedWindow();
+        const options = {
+            title: 'Choose Code Context',
+            message: 'Choose the folder Codex and Claude should inspect.',
+            defaultPath: active.cwd,
+            properties: ['openDirectory', 'createDirectory'],
+        };
+        const result = focused
+            ? await dialog.showOpenDialog(focused, options)
+            : await dialog.showOpenDialog(options);
+        if (result.canceled || !result.filePaths?.[0]) {
+            return { success: false, canceled: true, data: contextService.getState() };
+        }
+        return setCodeContext(result.filePaths[0]);
+    } catch (error) {
+        console.error('[SettingsService] Error choosing code context:', error);
+        return { success: false, error: error.message };
+    }
+}
+
 function initialize() {
     // cleanup 
     windowNotificationManager.cleanup();
@@ -450,6 +506,9 @@ module.exports = {
     updateContentProtection,
     getAutoUpdateSetting,
     setAutoUpdateSetting,
+    getCodeContext,
+    setCodeContext,
+    chooseCodeContextFolder,
     // Model settings facade
     getModelSettings,
     clearApiKey,

@@ -635,13 +635,19 @@ class ListenService {
             const fs = require('fs');
             const os = require('os');
             const config = require('../common/config/config');
-            const dst = config.get('transcriptUploadDir');
+            const mirrorDst = config.get('transcriptUploadDir');
             const src = finishedStore?.getPersistPath?.();
-            if (dst && src && fs.existsSync(src)) {
-                fs.mkdirSync(dst, { recursive: true });
-                const targetTranscript = path.join(dst, path.basename(src));
-                fs.copyFileSync(src, targetTranscript);
-                console.log(`[ListenService] transcript copied → ${targetTranscript}`);
+            // Build artifacts in a LOCAL stage dir, never directly in the Drive
+            // mount. transcriptUploadDir is a Google Drive File Stream path that
+            // periodically throws EPERM while its daemon restarts; writing there
+            // as the first step let a transient hiccup swallow the whole pipeline
+            // (no transcript, no summary, no Doc). Stage local → upload Doc over
+            // HTTP → mirror into Drive best-effort.
+            const stageDir = path.join(os.homedir(), 'Library/Application Support/Claudely/summaries');
+            if (src && fs.existsSync(src)) {
+                fs.mkdirSync(stageDir, { recursive: true });
+                const targetTranscript = src; // summarize from the local original; no pre-copy into the flaky mount
+                console.log(`[ListenService] staging sidecar → ${stageDir} (src ${path.basename(src)})`);
 
                 const baseName = path.basename(src).replace(/\.jsonl$/, '');
 
@@ -687,7 +693,7 @@ class ListenService {
                         if (fs.existsSync(tmpDir)) {
                             const fromMs = recordedFrom.getTime();
                             const toMs = recordedTo.getTime() + 60_000; // slop for trailing fires
-                            const shotsDir = path.join(dst, `${baseName}.screenshots`);
+                            const shotsDir = path.join(stageDir, `${baseName}.screenshots`);
                             for (const name of fs.readdirSync(tmpDir)) {
                                 if (!/^screen-\d+\.png$/.test(name)) continue;
                                 const full = path.join(tmpDir, name);
@@ -700,7 +706,7 @@ class ListenService {
                                 try {
                                     fs.copyFileSync(full, target);
                                     screenshotsCopied.push({
-                                        file: path.relative(dst, target),
+                                        file: path.relative(stageDir, target),
                                         captured_at: new Date(t).toISOString(),
                                         bytes: stat.size,
                                     });
@@ -753,7 +759,7 @@ class ListenService {
                     qa,
                     screenshots: screenshotsCopied,
                 };
-                const metaPath = path.join(dst, `${baseName}.meta.json`);
+                const metaPath = path.join(stageDir, `${baseName}.meta.json`);
                 fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
                 console.log(`[ListenService] meta sidecar → ${metaPath} (${events.length} event(s), ${qa.length} qa msg, ${screenshotsCopied.length} shot(s))`);
 
@@ -763,8 +769,9 @@ class ListenService {
                 // long enough that app.exit() would otherwise kill them.
                 // Disable with CLAUDELY_DISABLE_SUMMARY=1 for tests / debugging.
                 if (process.env.CLAUDELY_DISABLE_SUMMARY !== '1') {
-                    const summaryPath = path.join(dst, `${baseName}.summary.md`);
+                    const summaryPath = path.join(stageDir, `${baseName}.summary.md`);
                     const summaryJob = this._trackSummaryJob((async () => {
+                        let summaryOk = false;
                         try {
                             const { Summarizer } = require('../summary/summarizer');
                             const summarizer = new Summarizer();
@@ -775,36 +782,96 @@ class ListenService {
                                 metaPath,
                                 outPath: summaryPath,
                             });
+                            summaryOk = true;
                             console.log(`[ListenService] summary written ${res.bytes}B in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
                         } catch (e) {
                             console.warn('[ListenService] summary failed:', e.message);
-                            return;
                         }
-                        try {
-                            const { uploadSummary } = require('../summary/driveUploader');
-                            const cfg = require('../common/config/config');
-                            const result = await uploadSummary({
-                                markdownPath: summaryPath,
-                                fallbackTitle: baseName,
-                                webhookUrl: cfg.get('summaryWebhookUrl'),
-                                secret: cfg.get('summarySecret'),
-                            });
-                            if (result.skipped) {
-                                console.log(`[ListenService] summary upload skipped: ${result.reason}`);
-                            } else {
-                                console.log(`[ListenService] summary uploaded → ${result.url}`);
+                        // Upload the Doc FIRST — plain HTTP, independent of the
+                        // Drive mount, so it lands even while File Stream flaps.
+                        if (summaryOk) {
+                            try {
+                                const { uploadSummary } = require('../summary/driveUploader');
+                                const cfg = require('../common/config/config');
+                                const result = await uploadSummary({
+                                    markdownPath: summaryPath,
+                                    fallbackTitle: baseName,
+                                    webhookUrl: cfg.get('summaryWebhookUrl'),
+                                    secret: cfg.get('summarySecret'),
+                                });
+                                if (result.skipped) {
+                                    console.log(`[ListenService] summary upload skipped: ${result.reason}`);
+                                } else {
+                                    console.log(`[ListenService] summary uploaded → ${result.url}`);
+                                }
+                            } catch (e) {
+                                console.warn('[ListenService] summary upload failed:', e.message);
                             }
-                        } catch (e) {
-                            console.warn('[ListenService] summary upload failed:', e.message);
                         }
+                        // Mirror artifacts into the synced Drive folder,
+                        // best-effort with retry. Doc already shipped over HTTP;
+                        // originals stay in stageDir if the mount is down.
+                        await this._mirrorToDrive({
+                            mirrorDst, stageDir, src, metaPath,
+                            summaryPath: summaryOk ? summaryPath : null,
+                            screenshotsCopied,
+                        });
                     })(), `summary ${baseName}`);
                     void summaryJob; // tracked in _summaryJobs; shutdown awaits via waitForPendingSummaries
+                } else {
+                    // Summary disabled — still mirror transcript + meta to Drive.
+                    await this._mirrorToDrive({ mirrorDst, stageDir, src, metaPath, summaryPath: null, screenshotsCopied });
                 }
             }
             } catch (e) {
-                console.warn('[ListenService] transcript copy failed:', e.message);
+                console.warn('[ListenService] sidecar pipeline failed:', e.message);
             }
         })();
+    }
+
+    // Copy session artifacts from the local stage dir into the synced Google
+    // Drive folder. The mount (Google Drive File Stream) intermittently throws
+    // EPERM while its daemon restarts, so each file gets a few retries with
+    // backoff. Best-effort and never throws: the Google Doc is the real
+    // deliverable and ships over HTTP regardless; these are audit copies.
+    async _mirrorToDrive({ mirrorDst, stageDir, src, metaPath, summaryPath, screenshotsCopied }) {
+        if (!mirrorDst) {
+            console.log('[ListenService] no transcriptUploadDir configured; skipping Drive mirror');
+            return;
+        }
+        const path = require('path');
+        const fs = require('fs');
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+        const items = [[src, path.basename(src)], [metaPath, path.basename(metaPath)]];
+        if (summaryPath) items.push([summaryPath, path.basename(summaryPath)]);
+        for (const s of (screenshotsCopied || [])) {
+            items.push([path.join(stageDir, s.file), s.file]);
+        }
+
+        let copied = 0;
+        let failed = 0;
+        for (const [absSrc, relName] of items) {
+            if (!absSrc || !fs.existsSync(absSrc)) continue;
+            let ok = false;
+            for (let attempt = 1; attempt <= 3 && !ok; attempt++) {
+                try {
+                    const dest = path.join(mirrorDst, relName);
+                    fs.mkdirSync(path.dirname(dest), { recursive: true });
+                    fs.copyFileSync(absSrc, dest);
+                    ok = true;
+                } catch (e) {
+                    if (attempt === 3) {
+                        failed++;
+                        console.warn(`[ListenService] Drive mirror failed (${relName}) after 3 tries: ${e.message} — Doc already uploaded; original kept in ${stageDir}`);
+                    } else {
+                        await sleep(attempt * 2_000);
+                    }
+                }
+            }
+            if (ok) copied++;
+        }
+        console.log(`[ListenService] Drive mirror → ${mirrorDst}: ${copied} copied, ${failed} failed`);
     }
 
     // Back-compat no-ops for old featureBridge channels that still get wired:

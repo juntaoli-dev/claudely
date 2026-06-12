@@ -44,6 +44,32 @@ function doPost(e) {
 
         const folder = ensureTargetFolder(body.monthBucket);
         const blob = Utilities.newBlob(body.html, 'text/html', body.title + '.html');
+
+        // Live re-summary path: when a docId is supplied, replace that Doc's
+        // content in place so a meeting stays a single, continuously-updated
+        // Doc instead of spawning one per cycle. convert: true re-runs the
+        // HTML → Google Doc conversion over the existing file. If the id is
+        // stale (trashed / not found), fall back to creating a fresh Doc.
+        if (body.docId) {
+            try {
+                const updated = Drive.Files.update(
+                    { title: body.title },
+                    body.docId,
+                    blob,
+                    { convert: true }
+                );
+                return jsonOut({
+                    ok: true,
+                    id: updated.id,
+                    url: 'https://docs.google.com/document/d/' + updated.id + '/edit',
+                    folder: folder.getName(),
+                    updated: true,
+                });
+            } catch (updateErr) {
+                // fall through to insert a new Doc below
+            }
+        }
+
         // Drive Advanced Service v2: convert: true triggers server-side HTML
         // → Google Doc conversion. Resulting file's mimeType is
         // application/vnd.google-apps.document (a real Google Doc).

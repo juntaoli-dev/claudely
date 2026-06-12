@@ -63,6 +63,12 @@ class ListenService {
         this._lastTranscriptAt = null;
         this._audioIdleTimer = null;
         this._audioIdlePromptShown = false;
+        // Live-summary state. While a session runs, a timer re-summarizes the
+        // transcript-so-far every CLAUDELY_LIVE_SUMMARY_MS and updates ONE
+        // Google Doc in place (docId). Survives auto-restarts within the same
+        // DB session so the meeting stays a single Doc; reset on a fresh
+        // session. { timer, running, docId, lastSize, sessionId }.
+        this._liveSummary = null;
         console.log('[ListenService] Service instance created.');
     }
 
@@ -489,6 +495,7 @@ class ListenService {
             this._audioIdlePromptShown = false;
             this._scheduleIdlePrompt();
             this._scheduleAudioIdleCheck();
+            this._startLiveSummary();
 
             // Spam-protection: a closeSession() call that fired WHILE this
             // start() was awaiting DB / stt boot set _userStopRequested=true
@@ -502,6 +509,8 @@ class ListenService {
                 this.sessionStartedAt = null;
                 this._cancelIdlePrompt();
                 this._cancelAudioIdleCheck();
+                this._stopLiveSummary();
+                this._liveSummary = null;
                 if (this.currentSessionId) {
                     try { sessionRepository.end(this.currentSessionId); } catch (_) {}
                     this.currentSessionId = null;
@@ -535,6 +544,101 @@ class ListenService {
         };
     }
 
+    // Start the live re-summary timer for the current session. Re-summarizes
+    // the transcript-so-far every CLAUDELY_LIVE_SUMMARY_MS (default 2 min) and
+    // updates ONE Google Doc in place. Disabled when the period is <= 0 or
+    // summaries are off. Preserves the Doc id across auto-restarts within the
+    // same DB session so a reconnect doesn't spawn a second Doc.
+    _startLiveSummary() {
+        const periodMs = process.env.CLAUDELY_LIVE_SUMMARY_MS != null
+            ? Number(process.env.CLAUDELY_LIVE_SUMMARY_MS)
+            : 120_000;
+        if (!Number.isFinite(periodMs) || periodMs <= 0) return;
+        if (process.env.CLAUDELY_DISABLE_SUMMARY === '1') return;
+
+        const sameSession = this._liveSummary && this._liveSummary.sessionId === this.currentSessionId;
+        if (!sameSession) {
+            this._liveSummary = { timer: null, running: false, docId: null, lastSize: 0, sessionId: this.currentSessionId };
+        }
+        if (this._liveSummary.timer) return; // already ticking
+        this._liveSummary.timer = setInterval(() => {
+            this._runLiveSummary().catch((e) => console.warn('[ListenService] live summary tick error:', e.message));
+        }, periodMs);
+        console.log(`[ListenService] live summary timer started (${periodMs}ms)`);
+    }
+
+    _stopLiveSummary() {
+        if (this._liveSummary?.timer) {
+            clearInterval(this._liveSummary.timer);
+            this._liveSummary.timer = null;
+            console.log('[ListenService] live summary timer cleared');
+        }
+    }
+
+    // One live-summary cycle. Cheap-guards first (no active session, run in
+    // flight, transcript too short, nothing new since last run), then
+    // summarizes the partial transcript and creates/updates the session's Doc.
+    async _runLiveSummary() {
+        const ls = this._liveSummary;
+        if (!ls || ls.running || !this.active) return;
+        const fs = require('fs');
+        const path = require('path');
+        const os = require('os');
+        const src = this.active?.store?.getPersistPath?.();
+        if (!src || !fs.existsSync(src)) return;
+
+        let size = 0;
+        try { size = fs.statSync(src).size; } catch (_) { return; }
+        const MIN_BYTES = Number(process.env.CLAUDELY_LIVE_SUMMARY_MIN_BYTES) || 800;
+        if (size < MIN_BYTES) return;       // too little said yet — summary would be junk
+        if (size === ls.lastSize) return;   // nothing new since last cycle — skip the spend
+
+        ls.running = true;
+        try {
+            const stageDir = path.join(os.homedir(), 'Library/Application Support/Claudely/summaries');
+            fs.mkdirSync(stageDir, { recursive: true });
+            const baseName = path.basename(src).replace(/\.jsonl$/, '');
+            const summaryPath = path.join(stageDir, `${baseName}.summary.md`);
+            // Live cycles summarize transcript-only with a light meta sidecar;
+            // the final summary at Stop rebuilds meta with calendar/Q&A/shots.
+            const metaPath = path.join(stageDir, `${baseName}.meta.json`);
+            if (!fs.existsSync(metaPath)) {
+                fs.writeFileSync(metaPath, JSON.stringify({
+                    schema: 2,
+                    transcript_file: path.basename(src),
+                    live: true,
+                }, null, 2));
+            }
+
+            const { Summarizer } = require('../summary/summarizer');
+            const t0 = Date.now();
+            const res = await new Summarizer().summarize({ transcriptPath: src, metaPath, outPath: summaryPath });
+            console.log(`[ListenService] live summary ${res.bytes}B in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+
+            const { uploadSummary } = require('../summary/driveUploader');
+            const cfg = require('../common/config/config');
+            const hadDoc = !!ls.docId;
+            const result = await uploadSummary({
+                markdownPath: summaryPath,
+                fallbackTitle: baseName,
+                webhookUrl: cfg.get('summaryWebhookUrl'),
+                secret: cfg.get('summarySecret'),
+                docId: ls.docId,
+            });
+            if (result.skipped) {
+                console.log(`[ListenService] live summary upload skipped: ${result.reason}`);
+            } else {
+                if (result.id) ls.docId = result.id;
+                console.log(`[ListenService] live summary ${hadDoc ? 'updated' : 'created'} → ${result.url}`);
+            }
+            ls.lastSize = size;
+        } catch (e) {
+            console.warn('[ListenService] live summary cycle failed:', e.message);
+        } finally {
+            ls.running = false;
+        }
+    }
+
     async closeSession({ waitForSummary = false, shutdown = false } = {}) {
         if (shutdown) this._shuttingDown = true;
         // Idempotent: if there's nothing to clean up, skip cleanly so a
@@ -548,6 +652,9 @@ class ListenService {
         }
         this._cancelIdlePrompt();
         this._cancelAudioIdleCheck();
+        // Stop the live re-summary timer; the final summary below reuses the
+        // Doc it created so the meeting stays a single, finalized Doc.
+        this._stopLiveSummary();
         // Block the capture-exit handler from auto-restarting the session we're
         // tearing down. Cleared by the next explicit start().
         this._userStopRequested = true;
@@ -595,11 +702,16 @@ class ListenService {
         // only; the user-facing stop is already done. Shutdown is the one
         // caller that awaits: Codex CLI summaries take long enough that
         // app.exit() would otherwise kill them mid-write.
+        // Hand the live Doc id to the final summary so it updates the same
+        // Doc instead of spawning a duplicate, then clear live state.
+        const liveDocId = this._liveSummary?.docId || null;
+        this._liveSummary = null;
         const sidecarDone = this._finishSessionAsync({
             finishedStore,
             recordedFrom,
             recordedTo,
             sessionIdAtClose,
+            liveDocId,
         });
 
         if (waitForSummary) {
@@ -622,7 +734,7 @@ class ListenService {
     // dumping junk .summary.md files into the sync folder. Threshold is
     // intentionally generous so a quick "pause-to-check-something-then-resume"
     // also gets silently dropped.
-    _finishSessionAsync({ finishedStore, recordedFrom, recordedTo, sessionIdAtClose }) {
+    _finishSessionAsync({ finishedStore, recordedFrom, recordedTo, sessionIdAtClose, liveDocId = null }) {
         const MIN_SESSION_MS = Number(process.env.CLAUDELY_MIN_SIDECAR_MS) || 30_000;
         const durationMs = recordedFrom ? (recordedTo - recordedFrom) : 0;
         if (!recordedFrom || durationMs < MIN_SESSION_MS) {
@@ -798,6 +910,7 @@ class ListenService {
                                     fallbackTitle: baseName,
                                     webhookUrl: cfg.get('summaryWebhookUrl'),
                                     secret: cfg.get('summarySecret'),
+                                    docId: liveDocId, // update the live Doc in place, if any
                                 });
                                 if (result.skipped) {
                                     console.log(`[ListenService] summary upload skipped: ${result.reason}`);

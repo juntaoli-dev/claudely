@@ -139,7 +139,10 @@ function deriveMonthBucket(markdownPath) {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
-async function uploadSummary({ markdownPath, fallbackTitle, webhookUrl, secret, fetchImpl }) {
+// When docId is provided, the Apps Script updates that Doc's content in place
+// (and returns the same id) instead of creating a new Doc. Used by the live
+// re-summary loop so a meeting stays a single, continuously-updated Doc.
+async function uploadSummary({ markdownPath, fallbackTitle, webhookUrl, secret, fetchImpl, docId = null }) {
     if (!webhookUrl || !secret) {
         return { skipped: true, reason: 'missing summaryWebhookUrl or summarySecret in config' };
     }
@@ -156,7 +159,7 @@ async function uploadSummary({ markdownPath, fallbackTitle, webhookUrl, secret, 
     const res = await fetchFn(webhookUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ secret, title, html, monthBucket }),
+        body: JSON.stringify({ secret, title, html, monthBucket, docId: docId || undefined }),
         redirect: 'follow',
     });
 

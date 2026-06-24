@@ -16,14 +16,23 @@ const originalStart = sttService.start;
 describe('ListenService stop race + device-route restart', () => {
     let svc;
     let stopSpy;
+    let stopSpies;
     let onStateRef;
+    let onStateRefs;
     let startSpy;
+    const originalReattachDelay = process.env.CLAUDELY_CAPTURE_REATTACH_DELAY_MS;
 
     beforeEach(() => {
         onStateRef = null;
+        onStateRefs = [];
+        stopSpies = [];
         stopSpy = vi.fn();
+        process.env.CLAUDELY_CAPTURE_REATTACH_DELAY_MS = '0';
         startSpy = vi.fn(({ onState }) => {
             onStateRef = onState;
+            onStateRefs.push(onState);
+            stopSpy = vi.fn();
+            stopSpies.push(stopSpy);
             return { stop: stopSpy, store: { getPersistPath: () => null } };
         });
         sttService.start = startSpy;
@@ -36,6 +45,8 @@ describe('ListenService stop race + device-route restart', () => {
 
     afterAll(() => {
         sttService.start = originalStart;
+        if (originalReattachDelay === undefined) delete process.env.CLAUDELY_CAPTURE_REATTACH_DELAY_MS;
+        else process.env.CLAUDELY_CAPTURE_REATTACH_DELAY_MS = originalReattachDelay;
     });
 
     it('does NOT auto-restart capture after closeSession when the helper exits', async () => {
@@ -77,6 +88,42 @@ describe('ListenService stop race + device-route restart', () => {
         expect(startSpy).toHaveBeenCalledTimes(2);
         expect(svc._restartAttempts).toEqual([]);
         expect(svc._restartGiveUp).toBe(false);
+    });
+
+    it('audio-starved state reattaches capture in the same listen session', async () => {
+        await svc.start();
+        expect(startSpy).toHaveBeenCalledTimes(1);
+
+        onStateRefs[0]({ type: 'audio-starved', silentForMs: 120_000, track0: 0, track1: 0 });
+        await new Promise((r) => setTimeout(r, 10));
+
+        expect(startSpy).toHaveBeenCalledTimes(2);
+        expect(svc.active).toBeTruthy();
+        expect(svc._audioStarvedRestarts).toHaveLength(1);
+    });
+
+    it('ignores stale capture-exit from the old helper during reattach', async () => {
+        await svc.start();
+        expect(startSpy).toHaveBeenCalledTimes(1);
+
+        const reattaching = svc.reattachCapture('test route swap');
+        onStateRefs[0]({ type: 'capture-exit', code: 0 });
+        await reattaching;
+
+        expect(startSpy).toHaveBeenCalledTimes(2);
+        expect(svc.active).toBeTruthy();
+        expect(stopSpies[1]).not.toHaveBeenCalled();
+    });
+
+    it('auto-pauses empty no-audio sessions without creating a sidecar', async () => {
+        await svc.start();
+        svc.closeSession = vi.fn().mockResolvedValue({ success: true });
+        svc._hadTranscriptThisSession = false;
+        svc._audioStarvedRestarts = [Date.now() - 1, Date.now() - 2];
+
+        svc._handleAudioStarved({ type: 'audio-starved', silentForMs: 120_000, track0: 0, track1: 0 });
+
+        expect(svc.closeSession).toHaveBeenCalledWith({ skipSidecar: true });
     });
 
     it('explicit start() after a stop clears _userStopRequested', async () => {

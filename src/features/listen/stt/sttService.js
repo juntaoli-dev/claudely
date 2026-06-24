@@ -15,6 +15,18 @@ const { matchWake } = require('../../classify/wakePhrase');
 const { buildDispatcher, setActiveListenContext, clearActiveListenContext } = require('../../fire/instance');
 const config = require('../../common/config/config');
 
+const DEFAULT_AUDIO_SIGNAL_THRESHOLD = 16;
+const DEFAULT_AUDIO_SIGNAL_WATCHDOG_MS = 120_000;
+
+function hasPcmSignal(pcm, threshold = DEFAULT_AUDIO_SIGNAL_THRESHOLD) {
+    if (!pcm || pcm.length < 2) return false;
+    const limit = pcm.length - (pcm.length % 2);
+    for (let i = 0; i < limit; i += 2) {
+        if (Math.abs(pcm.readInt16LE(i)) >= threshold) return true;
+    }
+    return false;
+}
+
 function start({ onFinal, onInterim, onState } = {}) {
     const key = process.env.DEEPGRAM_API_KEY || config.get('deepgramApiKey');
     if (!key) throw new Error('DEEPGRAM_API_KEY missing — set env var or deepgramApiKey in ~/.claudely/config.json');
@@ -142,6 +154,12 @@ function start({ onFinal, onInterim, onState } = {}) {
     // grow without bound across a long session.
     const mono = process.env.CLAUDELY_STT_MONO === '1';
     const trackBytes = { 0: 0, 1: 0 };
+    const startedAt = Date.now();
+    let lastSignalAt = null;
+    let lastStarvedAt = 0;
+    const signalThreshold = Number(process.env.CLAUDELY_AUDIO_SIGNAL_THRESHOLD) || DEFAULT_AUDIO_SIGNAL_THRESHOLD;
+    const signalWatchdogMs = Number(process.env.CLAUDELY_AUDIO_SIGNAL_WATCHDOG_MS) || DEFAULT_AUDIO_SIGNAL_WATCHDOG_MS;
+    const signalWatchdogDisabled = process.env.CLAUDELY_AUDIO_SIGNAL_WATCHDOG_MS === '0';
     const interleaver = createInterleaver({
         onFrame: (interleaved) => {
             if (liveReady && !liveClosed) {
@@ -152,6 +170,7 @@ function start({ onFinal, onInterim, onState } = {}) {
     bus.on('pcm', ({ track, pcm }) => {
         if (track !== 0 && track !== 1) return;
         trackBytes[track] += pcm.length;
+        if (hasPcmSignal(pcm, signalThreshold)) lastSignalAt = Date.now();
 
         if (mono) {
             if (track !== 0) return; // drop mic in mono mode
@@ -174,6 +193,20 @@ function start({ onFinal, onInterim, onState } = {}) {
     let lastT1 = 0;
     let stalledTicks = 0;
     let lastKeepAlive = 0;
+    const maybeEmitAudioStarved = () => {
+        if (signalWatchdogDisabled) return;
+        const now = Date.now();
+        const silentForMs = now - (lastSignalAt || startedAt);
+        if (silentForMs < signalWatchdogMs || now - lastStarvedAt < signalWatchdogMs) return;
+        lastStarvedAt = now;
+        onState?.({
+            type: 'audio-starved',
+            reason: lastSignalAt ? 'no-recent-audio-signal' : 'no-audio-signal-since-start',
+            silentForMs,
+            track0: trackBytes[0],
+            track1: trackBytes[1],
+        });
+    };
     const statsTimer = setInterval(() => {
         const moved = trackBytes[0] !== lastT0 || trackBytes[1] !== lastT1;
         if (moved) {
@@ -181,6 +214,7 @@ function start({ onFinal, onInterim, onState } = {}) {
             lastT0 = trackBytes[0];
             lastT1 = trackBytes[1];
             onState?.({ type: 'stats', track0: trackBytes[0], track1: trackBytes[1] });
+            maybeEmitAudioStarved();
             return;
         }
         stalledTicks++;
@@ -194,6 +228,7 @@ function start({ onFinal, onInterim, onState } = {}) {
         if (stalledTicks % 15 === 0) {
             onState?.({ type: 'stats', track0: trackBytes[0], track1: trackBytes[1], stalled: true });
         }
+        maybeEmitAudioStarved();
     }, 2000);
     bus.on('stderr', (s) => onState?.({ type: 'stderr', text: s }));
     bus.on('exit', (code) => onState?.({ type: 'capture-exit', code }));
@@ -215,6 +250,7 @@ function start({ onFinal, onInterim, onState } = {}) {
 }
 
 module.exports = { start };
+module.exports.hasPcmSignal = hasPcmSignal;
 
 // Legacy class export kept for any stale listenService code path; throws if used.
 class SttService {

@@ -37,13 +37,12 @@ from Cmd+Space.
      provider is proven directly.
    - Quit and verify no `Claudely`, `audio-capture`, or `classifier` processes remain.
 7. Commit and push.
-   - Commit the verified change on the current feature branch. If on `main`,
-     create a `codex/<description>` branch first.
-   - Push the branch to `origin`.
-   - Update the existing branch PR, or open a draft PR against `main` if none
-     exists.
-   - Do not leave verified work local-only unless push/PR creation fails, and
-     report the exact failure.
+   - This is a solo-dev project: NEVER open a pull request, not even a draft.
+   - Do not create a feature branch for normal work.
+   - Commit the verified change directly on `main`.
+   - Push `main` to `origin`.
+   - Do not leave verified work local-only unless push fails, and report the
+     exact failure.
 
 ## Final Response Rule
 
@@ -53,7 +52,7 @@ For shipping-code changes, the final response must explicitly state:
 - Dev-shell e2e result.
 - `npm run package` result.
 - Installed `/Applications/Claudely.app` e2e result.
-- Commit, push, and PR/branch result.
+- Commit and `main` push result.
 - Any screenshot path used for visual confirmation.
 
 If any gate fails, say where it failed and what the next move is. Do not end

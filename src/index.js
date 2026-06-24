@@ -226,7 +226,11 @@ app.whenReady().then(async () => {
         // app opens (Cluely-style). User can panic-mute via Cmd+Shift+M or set
         // autoListen=false in ~/.claudely/config.json to opt out.
         const _config = require('./features/common/config/config');
-        if (_config.get('autoListen') && process.env.CLAUDELY_DEBUG_TRANSCRIPT_SCROLL !== '1') {
+        if (
+            _config.get('autoListen') &&
+            process.env.CLAUDELY_DEBUG_TRANSCRIPT_SCROLL !== '1' &&
+            process.env.CLAUDELY_DEBUG_AUDIO_REATTACH !== '1'
+        ) {
             setTimeout(async () => {
                 try {
                     console.log('[autoListen] starting STT pipeline');
@@ -272,6 +276,11 @@ app.whenReady().then(async () => {
             powerMonitor.on('resume', () => {
                 console.log('[powerMonitor] resume — broadcasting canonical state');
                 broadcastCanonicalState();
+                setTimeout(() => {
+                    listenService.reattachCapture('macOS resume').catch((e) => {
+                        console.warn('[powerMonitor] resume reattach failed:', e.message);
+                    });
+                }, 500);
             });
             powerMonitor.on('unlock-screen', () => {
                 console.log('[powerMonitor] unlock-screen — broadcasting canonical state');
@@ -399,6 +408,48 @@ app.whenReady().then(async () => {
                     app.exit(result?.ok ? 0 : 7);
                 } catch (e) {
                     console.error('[DEBUG_TRANSCRIPT_SCROLL] ERR', e);
+                    app.exit(1);
+                }
+            }, delayMs);
+        }
+
+        if (process.env.CLAUDELY_DEBUG_AUDIO_REATTACH === '1') {
+            const delayMs = Number(process.env.CLAUDELY_DEBUG_AUDIO_REATTACH_DELAY_MS) || 2000;
+            setTimeout(async () => {
+                try {
+                    console.log('[DEBUG_AUDIO_REATTACH] starting Listen pipeline');
+                    const internalBridge = require('./bridge/internalBridge');
+                    internalBridge.emit('window:requestVisibility', { name: 'listen', visible: true });
+                    await listenService.start();
+                    const beforeGeneration = listenService._captureGeneration;
+                    const beforePath = listenService.active?.store?.getPersistPath?.() || null;
+                    listenService._handleAudioStarved({
+                        type: 'audio-starved',
+                        reason: 'debug',
+                        silentForMs: Number(process.env.CLAUDELY_AUDIO_SIGNAL_WATCHDOG_MS) || 120_000,
+                        track0: 0,
+                        track1: 0,
+                    });
+                    const deadline = Date.now() + 8_000;
+                    while (Date.now() < deadline) {
+                        if (listenService.active && listenService._captureGeneration > beforeGeneration + 1) break;
+                        await new Promise((resolve) => setTimeout(resolve, 100));
+                    }
+                    const afterPath = listenService.active?.store?.getPersistPath?.() || null;
+                    const result = {
+                        ok: !!listenService.active && listenService._captureGeneration > beforeGeneration + 1 && beforePath !== afterPath,
+                        beforeGeneration,
+                        afterGeneration: listenService._captureGeneration,
+                        beforePath,
+                        afterPath,
+                        active: !!listenService.active,
+                    };
+                    console.log('[DEBUG_AUDIO_REATTACH]', JSON.stringify(result));
+                    await listenService.closeSession({ skipSidecar: true, waitForSummary: true });
+                    app.exit(result.ok ? 0 : 7);
+                } catch (e) {
+                    console.error('[DEBUG_AUDIO_REATTACH] ERR', e);
+                    try { await listenService.closeSession({ skipSidecar: true, waitForSummary: true }); } catch (_) {}
                     app.exit(1);
                 }
             }, delayMs);

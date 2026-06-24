@@ -12,6 +12,9 @@ const internalBridge = require('../../bridge/internalBridge');
 
 const IDLE_PROMPT_MS = Number(process.env.CLAUDELY_IDLE_PROMPT_MS) || 60 * 60 * 1000; // 1 hour
 const SUMMARY_SHUTDOWN_WAIT_MS = Number(process.env.CLAUDELY_SUMMARY_SHUTDOWN_WAIT_MS) || 240_000;
+const AUDIO_STARVED_WINDOW_MS = Number(process.env.CLAUDELY_AUDIO_STARVED_WINDOW_MS) || 15 * 60 * 1000;
+const AUDIO_STARVED_RESTART_MAX = Number(process.env.CLAUDELY_AUDIO_STARVED_RESTART_MAX) || 2;
+const DEFAULT_CAPTURE_REATTACH_DELAY_MS = 750;
 // Separate "no speech detected" guard: meeting ended but the helper is still
 // piping silence to Deepgram (Deepgram emits no transcripts on pure silence,
 // so byte-counters keep climbing but nothing useful happens). Prompt the user
@@ -63,6 +66,9 @@ class ListenService {
         this._lastTranscriptAt = null;
         this._audioIdleTimer = null;
         this._audioIdlePromptShown = false;
+        this._audioStarvedRestarts = [];
+        this._hadTranscriptThisSession = false;
+        this._captureGeneration = 0;
         // Live-summary state. While a session runs, a timer re-summarizes the
         // transcript-so-far every CLAUDELY_LIVE_SUMMARY_MS and updates ONE
         // Google Doc in place (docId). Survives auto-restarts within the same
@@ -88,6 +94,8 @@ class ListenService {
     _noteTranscriptActivity() {
         this._lastTranscriptAt = Date.now();
         this._audioIdlePromptShown = false;
+        this._audioStarvedRestarts = [];
+        this._hadTranscriptThisSession = true;
     }
 
     _checkAudioIdle() {
@@ -135,6 +143,61 @@ class ListenService {
             this._lastTranscriptAt = Date.now();
             this._audioIdlePromptShown = false;
         }
+    }
+
+    async reattachCapture(reason = 'audio route changed') {
+        if (!this.active || this.isInitializing || this._userStopRequested || this._shuttingDown) return false;
+
+        console.log(`[ListenService] reattaching capture — ${reason}`);
+        this.sendToRenderer('update-status', 'Audio route changed, reattaching…');
+
+        const oldActive = this.active;
+        // Make the old stt.start() closure stale before killing it. Its child
+        // process may emit capture-exit after the new capture has started; the
+        // generation guard below prevents that stale exit from stopping the new
+        // pipeline.
+        this._captureGeneration++;
+        this.active = null;
+        try { oldActive?.stop?.(); } catch (e) {
+            console.warn('[ListenService] reattach stop error:', e.message);
+        }
+
+        const reattachDelayMs = process.env.CLAUDELY_CAPTURE_REATTACH_DELAY_MS != null
+            ? Number(process.env.CLAUDELY_CAPTURE_REATTACH_DELAY_MS)
+            : DEFAULT_CAPTURE_REATTACH_DELAY_MS;
+        await new Promise((resolve) => setTimeout(resolve, Math.max(0, reattachDelayMs || 0)));
+        if (this.active || this._userStopRequested || this._shuttingDown) return false;
+
+        await this.start({ recovery: true });
+        this.broadcastCanonicalState();
+        return true;
+    }
+
+    _handleAudioStarved(state) {
+        if (!this.active || this.isInitializing || this._userStopRequested || this._shuttingDown) return;
+
+        const now = Date.now();
+        this._audioStarvedRestarts = this._audioStarvedRestarts.filter((t) => now - t < AUDIO_STARVED_WINDOW_MS);
+        this._audioStarvedRestarts.push(now);
+
+        if (this._audioStarvedRestarts.length > AUDIO_STARVED_RESTART_MAX) {
+            console.warn(
+                `[ListenService] no microphone/speaker signal after ${this._audioStarvedRestarts.length - 1} reattach attempt(s); pausing listen`
+            );
+            this.sendToRenderer('update-status', 'No microphone or speaker audio detected; listen paused. Check headset, then click Listen.');
+            void this.closeSession({ skipSidecar: !this._hadTranscriptThisSession }).catch((e) => {
+                console.warn('[ListenService] audio-starved auto-pause failed:', e.message);
+            });
+            return;
+        }
+
+        const seconds = Math.round((state?.silentForMs || 0) / 1000);
+        console.warn(`[ListenService] no audio signal for ${seconds}s — reattaching capture`);
+        this.sendToRenderer('update-status', 'No microphone or speaker audio detected; reattaching…');
+        void this.reattachCapture(`no audio signal for ${seconds}s`).catch((e) => {
+            console.warn('[ListenService] audio-starved reattach failed:', e.message);
+            this.sendToRenderer('update-status', `audio reattach failed: ${e.message}`);
+        });
     }
 
     _scheduleIdlePrompt() {
@@ -310,15 +373,19 @@ class ListenService {
         }
     }
 
-    async start() {
+    async start({ recovery = false } = {}) {
         if (this.active) return;
         if (this.isInitializing) return;
         this.isInitializing = true;
         this._stoppingCapture = false;
         // Manual or initial start clears the give-up flag and the rolling
         // attempt window so a fresh user-driven session gets a clean budget.
-        this._restartGiveUp = false;
-        this._restartAttempts = [];
+        if (!recovery) {
+            this._restartGiveUp = false;
+            this._restartAttempts = [];
+            this._audioStarvedRestarts = [];
+            this._hadTranscriptThisSession = false;
+        }
         this._userStopRequested = false;
         this.sendToRenderer('update-status', 'Starting capture…');
 
@@ -362,6 +429,7 @@ class ListenService {
                 }
             } catch (_) { /* ask window may not exist yet */ }
 
+            const captureGeneration = ++this._captureGeneration;
             this.active = stt.start({
                 onFinal: (line) => {
                     this._noteTranscriptActivity();
@@ -388,7 +456,12 @@ class ListenService {
                     else if (s.type === 'error') this.sendToRenderer('update-status', `ERR: ${s.error}`);
                     else if (s.type === 'provider') this.sendToRenderer('ai-provider-update', s.provider);
                     else if (s.type === 'stderr') console.warn('[ListenService][stderr]', s.text.trim());
+                    else if (s.type === 'audio-starved') this._handleAudioStarved(s);
                     else if (s.type === 'capture-exit') {
+                        if (captureGeneration !== this._captureGeneration) {
+                            console.log(`[ListenService] ignoring stale capture-exit for generation ${captureGeneration}`);
+                            return;
+                        }
                         // Swift audio-capture helper died (codesign hiccup,
                         // TCC race, kernel oom, …). Tear down and try a
                         // bounded number of restarts with backoff. After too
@@ -440,7 +513,7 @@ class ListenService {
                             this.sendToRenderer('update-status', 'Audio device changed, reattaching…');
                             setImmediate(() => {
                                 if (this.active || this._userStopRequested) return;
-                                this.start().then(() => {
+                                this.start({ recovery: true }).then(() => {
                                     // Non-click restart bypasses
                                     // changeSessionResult, so sync the UI
                                     // canonically.
@@ -478,7 +551,7 @@ class ListenService {
                             if (this.active) return;       // user already restarted
                             if (this._restartGiveUp) return;
                             if (this._userStopRequested) return;
-                            this.start().then(() => {
+                            this.start({ recovery: true }).then(() => {
                                 this.broadcastCanonicalState();
                             }).catch((e) => {
                                 console.warn('[ListenService] auto-restart failed:', e.message);
@@ -639,7 +712,7 @@ class ListenService {
         }
     }
 
-    async closeSession({ waitForSummary = false, shutdown = false } = {}) {
+    async closeSession({ waitForSummary = false, shutdown = false, skipSidecar = false } = {}) {
         if (shutdown) this._shuttingDown = true;
         // Idempotent: if there's nothing to clean up, skip cleanly so a
         // double-Stop click is a no-op. We DO proceed when isInitializing is
@@ -706,13 +779,15 @@ class ListenService {
         // Doc instead of spawning a duplicate, then clear live state.
         const liveDocId = this._liveSummary?.docId || null;
         this._liveSummary = null;
-        const sidecarDone = this._finishSessionAsync({
-            finishedStore,
-            recordedFrom,
-            recordedTo,
-            sessionIdAtClose,
-            liveDocId,
-        });
+        const sidecarDone = skipSidecar
+            ? (console.log('[ListenService] skipping sidecar — no usable audio before auto-pause'), undefined)
+            : this._finishSessionAsync({
+                finishedStore,
+                recordedFrom,
+                recordedTo,
+                sessionIdAtClose,
+                liveDocId,
+            });
 
         if (waitForSummary) {
             await sidecarDone;
@@ -758,7 +833,7 @@ class ListenService {
             const stageDir = path.join(os.homedir(), 'Library/Application Support/Claudely/summaries');
             if (src && fs.existsSync(src)) {
                 fs.mkdirSync(stageDir, { recursive: true });
-                const targetTranscript = src; // summarize from the local original; no pre-copy into the flaky mount
+                let targetTranscript = src; // summarize from the local original unless DB merge is safer
                 console.log(`[ListenService] staging sidecar → ${stageDir} (src ${path.basename(src)})`);
 
                 const baseName = path.basename(src).replace(/\.jsonl$/, '');
@@ -830,6 +905,31 @@ class ListenService {
                     } catch (e) {
                         console.warn('[ListenService] screenshot scan failed:', e.message);
                     }
+                }
+
+                let transcriptRows = [];
+                if (sessionIdAtClose) {
+                    try {
+                        transcriptRows = sttRepository.getAllTranscriptsBySessionId(sessionIdAtClose) || [];
+                    } catch (e) {
+                        console.warn('[ListenService] transcript DB lookup for sidecar failed:', e.message);
+                    }
+                }
+
+                let srcBytes = 0;
+                try { srcBytes = fs.statSync(src).size; } catch (_) {}
+                if (transcriptRows.length) {
+                    targetTranscript = path.join(stageDir, path.basename(src));
+                    const body = transcriptRows.map((row) => JSON.stringify({
+                        text: row.text,
+                        speaker: row.speaker,
+                        ts: Number(row.start_at || row.created_at || 0) * 1000,
+                    })).join('\n') + '\n';
+                    fs.writeFileSync(targetTranscript, body);
+                    console.log(`[ListenService] rebuilt transcript from DB rows → ${targetTranscript} (${transcriptRows.length} line(s))`);
+                } else if (srcBytes === 0 && qa.length === 0 && screenshotsCopied.length === 0) {
+                    console.log('[ListenService] skipping sidecar — empty transcript with no Q&A or screenshots');
+                    return;
                 }
 
                 const meta = {
@@ -925,7 +1025,7 @@ class ListenService {
                         // best-effort with retry. Doc already shipped over HTTP;
                         // originals stay in stageDir if the mount is down.
                         await this._mirrorToDrive({
-                            mirrorDst, stageDir, src, metaPath,
+                            mirrorDst, stageDir, src: targetTranscript, metaPath,
                             summaryPath: summaryOk ? summaryPath : null,
                             screenshotsCopied,
                         });
@@ -933,7 +1033,7 @@ class ListenService {
                     void summaryJob; // tracked in _summaryJobs; shutdown awaits via waitForPendingSummaries
                 } else {
                     // Summary disabled — still mirror transcript + meta to Drive.
-                    await this._mirrorToDrive({ mirrorDst, stageDir, src, metaPath, summaryPath: null, screenshotsCopied });
+                    await this._mirrorToDrive({ mirrorDst, stageDir, src: targetTranscript, metaPath, summaryPath: null, screenshotsCopied });
                 }
             }
             } catch (e) {

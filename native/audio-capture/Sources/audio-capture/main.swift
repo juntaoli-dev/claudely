@@ -113,11 +113,16 @@ struct AudioCapture {
 
 enum DeviceRouteWatcher {
     static var armed = false
+    static var exiting = false
+    static var lastSnapshot = ""
 
     static func install() {
+        lastSnapshot = currentSnapshot()
         let selectors: [AudioObjectPropertySelector] = [
             kAudioHardwarePropertyDefaultOutputDevice,
             kAudioHardwarePropertyDefaultInputDevice,
+            kAudioHardwarePropertyDefaultSystemOutputDevice,
+            kAudioHardwarePropertyDevices,
         ]
         for sel in selectors {
             var addr = AudioObjectPropertyAddress(
@@ -130,19 +135,87 @@ enum DeviceRouteWatcher {
                 &addr,
                 DispatchQueue.main
             ) { _, _ in
-                guard armed else { return }
-                FileHandle.standardError.write(
-                    "INFO: default audio device changed (sel=\(sel)), exiting for clean restart\n".data(using: .utf8)!
-                )
-                exit(75)
+                exitForRouteChange("audio device route changed (sel=\(sel))")
             }
             if status != noErr {
                 FileHandle.standardError.write("WARN: AddPropertyListener failed sel=\(sel) status=\(status)\n".data(using: .utf8)!)
             }
         }
+        Task.detached {
+            while true {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                let snap = currentSnapshot()
+                if armed && snap != lastSnapshot {
+                    exitForRouteChange("audio device snapshot changed \(lastSnapshot) -> \(snap)")
+                }
+                lastSnapshot = snap
+            }
+        }
         // Arm after a short delay so startup-time settling doesn't trip an
         // immediate exit before we've even emitted any samples.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { armed = true }
+    }
+
+    static func exitForRouteChange(_ reason: String) {
+        guard armed && !exiting else { return }
+        exiting = true
+        FileHandle.standardError.write("INFO: \(reason), exiting for clean restart\n".data(using: .utf8)!)
+        exit(75)
+    }
+
+    static func currentSnapshot() -> String {
+        let input = defaultDeviceID(kAudioHardwarePropertyDefaultInputDevice)
+        let output = defaultDeviceID(kAudioHardwarePropertyDefaultOutputDevice)
+        let system = defaultDeviceID(kAudioHardwarePropertyDefaultSystemOutputDevice)
+        let devices = allDeviceIDs().map(String.init).joined(separator: ",")
+        return "in=\(input);out=\(output);system=\(system);devices=\(devices)"
+    }
+
+    static func defaultDeviceID(_ selector: AudioObjectPropertySelector) -> AudioObjectID {
+        var device = AudioObjectID(0)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &addr,
+            0,
+            nil,
+            &size,
+            &device
+        )
+        return status == noErr ? device : AudioObjectID(0)
+    }
+
+    static func allDeviceIDs() -> [AudioObjectID] {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        var status = AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject),
+            &addr,
+            0,
+            nil,
+            &size
+        )
+        if status != noErr || size == 0 { return [] }
+        let count = Int(size) / MemoryLayout<AudioObjectID>.size
+        var devices = [AudioObjectID](repeating: 0, count: count)
+        status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &addr,
+            0,
+            nil,
+            &size,
+            &devices
+        )
+        return status == noErr ? devices.sorted() : []
     }
 }
 

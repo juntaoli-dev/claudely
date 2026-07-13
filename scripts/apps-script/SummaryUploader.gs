@@ -128,7 +128,12 @@ function clearDocIdForKey(key) {
 // GET handler for a quick health check from a browser. Returns JSON, never
 // echoes the secret.
 function doGet() {
-    return jsonOut({ ok: true, hint: 'POST {secret, title, html} to upload' });
+    return jsonOut({
+        ok: true,
+        hint: 'POST {secret, title, html} to upload',
+        supportsDedupe: true,
+        version: 'summary-dedupe-v2',
+    });
 }
 
 // Resolve <PARENT_FOLDER_NAME>/<TARGET_FOLDER_NAME>[/<YYYY-MM>], creating any

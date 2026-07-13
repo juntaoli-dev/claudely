@@ -9,6 +9,8 @@ const stt = require('./stt/sttService');
 const sessionRepository = require('../common/repositories/session');
 const sttRepository = require('./stt/repositories');
 const internalBridge = require('../../bridge/internalBridge');
+const { buildSummaryIdentity } = require('../summary/summaryIdentity');
+const { getDefaultRegistry } = require('../summary/summaryDocRegistry');
 
 const IDLE_PROMPT_MS = Number(process.env.CLAUDELY_IDLE_PROMPT_MS) || 60 * 60 * 1000; // 1 hour
 const SUMMARY_SHUTDOWN_WAIT_MS = Number(process.env.CLAUDELY_SUMMARY_SHUTDOWN_WAIT_MS) || 240_000;
@@ -75,6 +77,7 @@ class ListenService {
         // DB session so the meeting stays a single Doc; reset on a fresh
         // session. { timer, running, docId, lastSize, sessionId }.
         this._liveSummary = null;
+        this._summaryIdentity = null;
         console.log('[ListenService] Service instance created.');
     }
 
@@ -330,6 +333,58 @@ class ListenService {
         return { completed: true, count: jobs.length };
     }
 
+    _summaryEventForMeta(event) {
+        if (!event) return null;
+        return {
+            title: event.title || '',
+            start: event.start || '',
+            end: event.end || '',
+            is_active_at_close: !!(event.isActive || event.is_active_at_close),
+            location: event.location || '',
+            url: event.url || '',
+            uid: event.uid || '',
+            notes: event.notes || '',
+            calendar: event.calendar || '',
+            google_calendar_link: event.google_calendar_link || buildGoogleCalLinkFromIcsUid(event.uid),
+        };
+    }
+
+    _identityMeta(identity) {
+        if (!identity) return null;
+        return {
+            kind: identity.kind,
+            key: identity.key,
+            title: identity.title,
+        };
+    }
+
+    _summaryTitleOverride(identity) {
+        return identity?.kind === 'calendar' ? identity.title : null;
+    }
+
+    _summaryDedupeKey(identity) {
+        return identity?.kind === 'calendar' ? identity.key : null;
+    }
+
+    _summaryDocIdFor(identity) {
+        if (identity?.kind !== 'calendar') return null;
+        try {
+            return getDefaultRegistry().getDocId(identity.key);
+        } catch (e) {
+            console.warn('[ListenService] summary doc registry lookup failed:', e.message);
+            return null;
+        }
+    }
+
+    _rememberSummaryDoc(identity, docId, extra = {}) {
+        if (identity?.kind !== 'calendar' || !docId) return;
+        try {
+            getDefaultRegistry().remember(identity, docId, extra);
+        } catch (e) {
+            console.warn('[ListenService] summary doc registry save failed:', e.message);
+        }
+    }
+
     async handleListenRequest(listenButtonText) {
         const { windowPool } = require('../../window/windowManager');
         const listenWindow = windowPool?.get('listen');
@@ -385,6 +440,7 @@ class ListenService {
             this._restartAttempts = [];
             this._audioStarvedRestarts = [];
             this._hadTranscriptThisSession = false;
+            this._summaryIdentity = null;
         }
         this._userStopRequested = false;
         this.sendToRenderer('update-status', 'Starting capture…');
@@ -584,6 +640,7 @@ class ListenService {
                 this._cancelAudioIdleCheck();
                 this._stopLiveSummary();
                 this._liveSummary = null;
+                this._summaryIdentity = null;
                 if (this.currentSessionId) {
                     try { sessionRepository.end(this.currentSessionId); } catch (_) {}
                     this.currentSessionId = null;
@@ -672,16 +729,52 @@ class ListenService {
             fs.mkdirSync(stageDir, { recursive: true });
             const baseName = path.basename(src).replace(/\.jsonl$/, '');
             const summaryPath = path.join(stageDir, `${baseName}.summary.md`);
+            const recordedFrom = this.sessionStartedAt ? new Date(this.sessionStartedAt) : null;
+            const recordedTo = new Date();
+            let events = [];
+            const shouldFetchCalendar = recordedFrom
+                && (!this._summaryIdentity || this._summaryIdentity.kind !== 'calendar')
+                && (Date.now() - (ls.calendarLookupAt || 0) > 5 * 60 * 1000);
+            if (shouldFetchCalendar) {
+                ls.calendarLookupAt = Date.now();
+                try {
+                    const cal = require('../calendar/calendarContext');
+                    events = await cal.fetchEventsForWindow(recordedFrom, recordedTo);
+                } catch (e) {
+                    console.warn('[ListenService] calendar lookup for live summary failed:', e.message);
+                }
+            }
+            const identityEvents = events.length
+                ? events
+                : (this._summaryIdentity?.event ? [this._summaryIdentity.event] : []);
+            const identity = buildSummaryIdentity({
+                events: identityEvents,
+                recordedFrom,
+                recordedTo,
+                fallbackTitle: baseName,
+                fallbackBaseName: baseName,
+            });
+            if (identity.kind === 'calendar' || !this._summaryIdentity) {
+                this._summaryIdentity = identity;
+            }
+
             // Live cycles summarize transcript-only with a light meta sidecar;
             // the final summary at Stop rebuilds meta with calendar/Q&A/shots.
             const metaPath = path.join(stageDir, `${baseName}.meta.json`);
-            if (!fs.existsSync(metaPath)) {
-                fs.writeFileSync(metaPath, JSON.stringify({
-                    schema: 2,
-                    transcript_file: path.basename(src),
-                    live: true,
-                }, null, 2));
-            }
+            const metaEvents = (events.length ? events : (identity.event ? [identity.event] : []))
+                .map((event) => this._summaryEventForMeta(event))
+                .filter(Boolean);
+            fs.writeFileSync(metaPath, JSON.stringify({
+                schema: 2,
+                transcript_file: path.basename(src),
+                recorded_from: recordedFrom ? recordedFrom.toISOString() : null,
+                recorded_to: recordedTo.toISOString(),
+                duration_ms: recordedFrom ? (recordedTo - recordedFrom) : null,
+                session_id: this.currentSessionId || null,
+                live: true,
+                summary_identity: this._identityMeta(identity),
+                events: metaEvents,
+            }, null, 2));
 
             const { Summarizer } = require('../summary/summarizer');
             const t0 = Date.now();
@@ -690,18 +783,32 @@ class ListenService {
 
             const { uploadSummary } = require('../summary/driveUploader');
             const cfg = require('../common/config/config');
-            const hadDoc = !!ls.docId;
+            const registryDocId = this._summaryDocIdFor(identity);
+            if (!ls.docId && registryDocId) ls.docId = registryDocId;
+            const docId = ls.docId || null;
+            const hadDoc = !!docId;
             const result = await uploadSummary({
                 markdownPath: summaryPath,
                 fallbackTitle: baseName,
                 webhookUrl: cfg.get('summaryWebhookUrl'),
                 secret: cfg.get('summarySecret'),
-                docId: ls.docId,
+                docId,
+                titleOverride: this._summaryTitleOverride(identity),
+                dedupeKey: this._summaryDedupeKey(identity),
             });
             if (result.skipped) {
                 console.log(`[ListenService] live summary upload skipped: ${result.reason}`);
             } else {
-                if (result.id) ls.docId = result.id;
+                if (docId && !result.updateHonored) {
+                    console.warn('[ListenService] live summary webhook did not update the requested Doc; redeploy scripts/apps-script/SummaryUploader.gs');
+                }
+                if (result.id) {
+                    ls.docId = result.id;
+                    this._rememberSummaryDoc(identity, result.id, {
+                        url: result.url || '',
+                        monthBucket: result.monthBucket || '',
+                    });
+                }
                 console.log(`[ListenService] live summary ${hadDoc ? 'updated' : 'created'} → ${result.url}`);
             }
             ls.lastSize = size;
@@ -778,7 +885,9 @@ class ListenService {
         // Hand the live Doc id to the final summary so it updates the same
         // Doc instead of spawning a duplicate, then clear live state.
         const liveDocId = this._liveSummary?.docId || null;
+        const liveSummaryIdentity = this._summaryIdentity || null;
         this._liveSummary = null;
+        this._summaryIdentity = null;
         const sidecarDone = skipSidecar
             ? (console.log('[ListenService] skipping sidecar — no usable audio before auto-pause'), undefined)
             : this._finishSessionAsync({
@@ -787,6 +896,7 @@ class ListenService {
                 recordedTo,
                 sessionIdAtClose,
                 liveDocId,
+                summaryIdentity: liveSummaryIdentity,
             });
 
         if (waitForSummary) {
@@ -809,7 +919,7 @@ class ListenService {
     // dumping junk .summary.md files into the sync folder. Threshold is
     // intentionally generous so a quick "pause-to-check-something-then-resume"
     // also gets silently dropped.
-    _finishSessionAsync({ finishedStore, recordedFrom, recordedTo, sessionIdAtClose, liveDocId = null }) {
+    _finishSessionAsync({ finishedStore, recordedFrom, recordedTo, sessionIdAtClose, liveDocId = null, summaryIdentity = null }) {
         const MIN_SESSION_MS = Number(process.env.CLAUDELY_MIN_SIDECAR_MS) || 30_000;
         const durationMs = recordedFrom ? (recordedTo - recordedFrom) : 0;
         if (!recordedFrom || durationMs < MIN_SESSION_MS) {
@@ -847,6 +957,16 @@ class ListenService {
                     } catch (e) {
                         console.warn('[ListenService] calendar lookup for sidecar failed:', e.message);
                     }
+                }
+                let identity = buildSummaryIdentity({
+                    events,
+                    recordedFrom,
+                    recordedTo,
+                    fallbackTitle: baseName,
+                    fallbackBaseName: baseName,
+                });
+                if (identity.kind !== 'calendar' && summaryIdentity?.kind === 'calendar') {
+                    identity = summaryIdentity;
                 }
 
                 // Q&A history that happened during the recording. Manual asks
@@ -932,6 +1052,9 @@ class ListenService {
                     return;
                 }
 
+                const metaEvents = (events.length ? events : (identity.event ? [identity.event] : []))
+                    .map((e) => this._summaryEventForMeta(e))
+                    .filter(Boolean);
                 const meta = {
                     schema: 2,
                     transcript_file: path.basename(src),
@@ -955,19 +1078,8 @@ class ListenService {
                             return [];
                         }
                     })(),
-                    events: events.map((e) => ({
-                        title: e.title,
-                        start: e.start,
-                        end: e.end,
-                        is_active_at_close: e.isActive,
-                        location: e.location || '',
-                        url: e.url || '',
-                        uid: e.uid || '',
-                        notes: e.notes || '',
-                        calendar: e.calendar || '',
-                        // Best-effort Google Calendar deep link from the event UID.
-                        google_calendar_link: buildGoogleCalLinkFromIcsUid(e.uid),
-                    })),
+                    summary_identity: this._identityMeta(identity),
+                    events: metaEvents,
                     qa,
                     screenshots: screenshotsCopied,
                 };
@@ -1005,16 +1117,27 @@ class ListenService {
                             try {
                                 const { uploadSummary } = require('../summary/driveUploader');
                                 const cfg = require('../common/config/config');
+                                const registryDocId = this._summaryDocIdFor(identity);
+                                const docId = liveDocId || registryDocId || null;
                                 const result = await uploadSummary({
                                     markdownPath: summaryPath,
                                     fallbackTitle: baseName,
                                     webhookUrl: cfg.get('summaryWebhookUrl'),
                                     secret: cfg.get('summarySecret'),
-                                    docId: liveDocId, // update the live Doc in place, if any
+                                    docId,
+                                    titleOverride: this._summaryTitleOverride(identity),
+                                    dedupeKey: this._summaryDedupeKey(identity),
                                 });
                                 if (result.skipped) {
                                     console.log(`[ListenService] summary upload skipped: ${result.reason}`);
                                 } else {
+                                    if (docId && !result.updateHonored) {
+                                        console.warn('[ListenService] summary webhook did not update the requested Doc; redeploy scripts/apps-script/SummaryUploader.gs');
+                                    }
+                                    this._rememberSummaryDoc(identity, result.id, {
+                                        url: result.url || '',
+                                        monthBucket: result.monthBucket || '',
+                                    });
                                     console.log(`[ListenService] summary uploaded → ${result.url}`);
                                 }
                             } catch (e) {

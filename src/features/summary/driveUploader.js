@@ -18,9 +18,13 @@ const fs = require('fs');
 const path = require('path');
 const { marked, Renderer } = require('marked');
 
+function normalizeTitle(title) {
+    return String(title || '').replace(/\s+/g, ' ').trim();
+}
+
 function deriveTitle(markdown, fallback) {
     const m = (markdown || '').match(/^\s*#\s+(.+?)\s*$/m);
-    return m ? m[1].trim() : fallback;
+    return m ? normalizeTitle(m[1]) : normalizeTitle(fallback);
 }
 
 // Color palette matching the user's reference visa-guide doc:
@@ -142,7 +146,16 @@ function deriveMonthBucket(markdownPath) {
 // When docId is provided, the Apps Script updates that Doc's content in place
 // (and returns the same id) instead of creating a new Doc. Used by the live
 // re-summary loop so a meeting stays a single, continuously-updated Doc.
-async function uploadSummary({ markdownPath, fallbackTitle, webhookUrl, secret, fetchImpl, docId = null }) {
+async function uploadSummary({
+    markdownPath,
+    fallbackTitle,
+    webhookUrl,
+    secret,
+    fetchImpl,
+    docId = null,
+    titleOverride = null,
+    dedupeKey = null,
+}) {
     if (!webhookUrl || !secret) {
         return { skipped: true, reason: 'missing summaryWebhookUrl or summarySecret in config' };
     }
@@ -150,7 +163,8 @@ async function uploadSummary({ markdownPath, fallbackTitle, webhookUrl, secret, 
         return { skipped: true, reason: 'markdown file not found' };
     }
     const markdown = fs.readFileSync(markdownPath, 'utf8');
-    const title = deriveTitle(markdown, fallbackTitle || path.basename(markdownPath, '.md'));
+    const forcedTitle = normalizeTitle(titleOverride);
+    const title = forcedTitle || deriveTitle(markdown, fallbackTitle || path.basename(markdownPath, '.md'));
     const html = renderHtml(markdown, title);
     const monthBucket = deriveMonthBucket(markdownPath);
 
@@ -159,7 +173,14 @@ async function uploadSummary({ markdownPath, fallbackTitle, webhookUrl, secret, 
     const res = await fetchFn(webhookUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ secret, title, html, monthBucket, docId: docId || undefined }),
+        body: JSON.stringify({
+            secret,
+            title,
+            html,
+            monthBucket,
+            docId: docId || undefined,
+            dedupeKey: dedupeKey || undefined,
+        }),
         redirect: 'follow',
     });
 
@@ -174,7 +195,17 @@ async function uploadSummary({ markdownPath, fallbackTitle, webhookUrl, secret, 
         e.payload = payload;
         throw e;
     }
-    return { skipped: false, id: payload.id, url: payload.url, title, monthBucket };
+    const updateHonored = docId ? (payload.id === docId || payload.updated === true) : true;
+    return {
+        skipped: false,
+        id: payload.id,
+        url: payload.url,
+        title,
+        monthBucket,
+        updated: !!payload.updated,
+        supportsDedupe: !!payload.supportsDedupe,
+        updateHonored,
+    };
 }
 
-module.exports = { uploadSummary, renderHtml, deriveTitle, deriveMonthBucket };
+module.exports = { uploadSummary, renderHtml, deriveTitle, deriveMonthBucket, normalizeTitle };

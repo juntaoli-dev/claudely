@@ -28,6 +28,7 @@
 const SHARED_SECRET = 'CHANGE_ME_TO_A_LONG_RANDOM_STRING';
 const PARENT_FOLDER_NAME = 'Claudely Transcripts';
 const TARGET_FOLDER_NAME = 'Meeting Summary';
+const DOC_KEY_PREFIX = 'summaryDocId:';
 
 function doPost(e) {
     try {
@@ -44,28 +45,35 @@ function doPost(e) {
 
         const folder = ensureTargetFolder(body.monthBucket);
         const blob = Utilities.newBlob(body.html, 'text/html', body.title + '.html');
+        const dedupeKey = normalizeDedupeKey(body.dedupeKey);
+        const storedDocId = dedupeKey ? getDocIdForKey(dedupeKey) : '';
+        const targetDocId = body.docId || storedDocId;
 
         // Live re-summary path: when a docId is supplied, replace that Doc's
         // content in place so a meeting stays a single, continuously-updated
         // Doc instead of spawning one per cycle. convert: true re-runs the
         // HTML → Google Doc conversion over the existing file. If the id is
         // stale (trashed / not found), fall back to creating a fresh Doc.
-        if (body.docId) {
+        if (targetDocId) {
             try {
                 const updated = Drive.Files.update(
                     { title: body.title },
-                    body.docId,
+                    targetDocId,
                     blob,
                     { convert: true }
                 );
+                if (dedupeKey) setDocIdForKey(dedupeKey, updated.id);
                 return jsonOut({
                     ok: true,
                     id: updated.id,
                     url: 'https://docs.google.com/document/d/' + updated.id + '/edit',
                     folder: folder.getName(),
                     updated: true,
+                    supportsDedupe: true,
+                    dedupeKey: dedupeKey || '',
                 });
             } catch (updateErr) {
+                if (dedupeKey && storedDocId && targetDocId === storedDocId) clearDocIdForKey(dedupeKey);
                 // fall through to insert a new Doc below
             }
         }
@@ -82,16 +90,39 @@ function doPost(e) {
             blob,
             { convert: true }
         );
+        if (dedupeKey) setDocIdForKey(dedupeKey, file.id);
 
         return jsonOut({
             ok: true,
             id: file.id,
             url: 'https://docs.google.com/document/d/' + file.id + '/edit',
             folder: folder.getName(),
+            supportsDedupe: true,
+            dedupeKey: dedupeKey || '',
         });
     } catch (err) {
         return jsonOut({ ok: false, error: String(err && err.stack || err) });
     }
+}
+
+function normalizeDedupeKey(key) {
+    key = String(key || '').trim();
+    if (!key) return '';
+    return key.slice(0, 180);
+}
+
+function getDocIdForKey(key) {
+    return PropertiesService.getScriptProperties().getProperty(DOC_KEY_PREFIX + key) || '';
+}
+
+function setDocIdForKey(key, docId) {
+    if (!key || !docId) return;
+    PropertiesService.getScriptProperties().setProperty(DOC_KEY_PREFIX + key, docId);
+}
+
+function clearDocIdForKey(key) {
+    if (!key) return;
+    PropertiesService.getScriptProperties().deleteProperty(DOC_KEY_PREFIX + key);
 }
 
 // GET handler for a quick health check from a browser. Returns JSON, never

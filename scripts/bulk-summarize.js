@@ -18,6 +18,8 @@ const path = require('path');
 const cfg = require('../src/features/common/config/config');
 const { Summarizer } = require('../src/features/summary/summarizer');
 const { uploadSummary } = require('../src/features/summary/driveUploader');
+const { buildSummaryIdentity } = require('../src/features/summary/summaryIdentity');
+const { getDefaultRegistry } = require('../src/features/summary/summaryDocRegistry');
 
 const MIN_BYTES = 500;
 const REUPLOAD = !process.argv.includes('--no-reupload');
@@ -39,6 +41,7 @@ async function run() {
         const baseName = fname.replace(/\.jsonl$/, '');
         const metaPath = path.join(dst, `${baseName}.meta.json`);
         const summaryPath = path.join(dst, `${baseName}.summary.md`);
+        let meta = null;
 
         if (!fs.existsSync(metaPath)) {
             const stub = {
@@ -54,6 +57,14 @@ async function run() {
             };
             fs.writeFileSync(metaPath, JSON.stringify(stub, null, 2));
             console.log(`[bulk] stub meta → ${path.basename(metaPath)}`);
+            meta = stub;
+        } else {
+            try {
+                meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+            } catch (e) {
+                console.warn(`[bulk] could not read meta for ${fname}: ${e.message}`);
+                meta = null;
+            }
         }
 
         if (!fs.existsSync(summaryPath)) {
@@ -72,14 +83,34 @@ async function run() {
         }
 
         try {
+            const identity = buildSummaryIdentity({
+                events: meta?.events || [],
+                recordedFrom: meta?.recorded_from || null,
+                recordedTo: meta?.recorded_to || null,
+                fallbackTitle: baseName,
+                fallbackBaseName: baseName,
+            });
+            const registry = getDefaultRegistry();
+            const docId = identity.kind === 'calendar' ? registry.getDocId(identity.key) : null;
             const r = await uploadSummary({
                 markdownPath: summaryPath,
                 fallbackTitle: baseName,
                 webhookUrl: cfg.get('summaryWebhookUrl'),
                 secret: cfg.get('summarySecret'),
+                docId,
+                titleOverride: identity.kind === 'calendar' ? identity.title : null,
+                dedupeKey: identity.kind === 'calendar' ? identity.key : null,
             });
             if (r.skipped) console.log(`[bulk] upload skipped: ${r.reason}`);
-            else console.log(`[bulk] uploaded → ${r.url}`);
+            else {
+                if (identity.kind === 'calendar') {
+                    registry.remember(identity, r.id, {
+                        url: r.url || '',
+                        monthBucket: r.monthBucket || '',
+                    });
+                }
+                console.log(`[bulk] uploaded → ${r.url}`);
+            }
         } catch (e) {
             console.error(`[bulk] upload ${fname} FAIL:`, e.message);
         }

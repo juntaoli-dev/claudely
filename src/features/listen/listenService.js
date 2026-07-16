@@ -9,7 +9,7 @@ const stt = require('./stt/sttService');
 const sessionRepository = require('../common/repositories/session');
 const sttRepository = require('./stt/repositories');
 const internalBridge = require('../../bridge/internalBridge');
-const { buildSummaryIdentity } = require('../summary/summaryIdentity');
+const { buildSummaryIdentity, isAvailabilityBlock } = require('../summary/summaryIdentity');
 const { getDefaultRegistry } = require('../summary/summaryDocRegistry');
 
 const IDLE_PROMPT_MS = Number(process.env.CLAUDELY_IDLE_PROMPT_MS) || 60 * 60 * 1000; // 1 hour
@@ -762,6 +762,7 @@ class ListenService {
             // the final summary at Stop rebuilds meta with calendar/Q&A/shots.
             const metaPath = path.join(stageDir, `${baseName}.meta.json`);
             const metaEvents = (events.length ? events : (identity.event ? [identity.event] : []))
+                .filter((event) => !isAvailabilityBlock(event))
                 .map((event) => this._summaryEventForMeta(event))
                 .filter(Boolean);
             fs.writeFileSync(metaPath, JSON.stringify({
@@ -1053,6 +1054,7 @@ class ListenService {
                 }
 
                 const metaEvents = (events.length ? events : (identity.event ? [identity.event] : []))
+                    .filter((event) => !isAvailabilityBlock(event))
                     .map((e) => this._summaryEventForMeta(e))
                     .filter(Boolean);
                 const meta = {

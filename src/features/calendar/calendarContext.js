@@ -10,6 +10,7 @@
 //   • Subsequent fires re-warm in the background after the 60 s TTL expires.
 
 const { spawn } = require('child_process');
+const { isAvailabilityBlock } = require('../summary/summaryIdentity');
 
 const TTL_MS = 60 * 1000;
 let cache = { ts: 0, payload: null };
@@ -128,13 +129,19 @@ function parseOutput(out) {
             uid: fields.uid || '',
             notes: fields.notes || '',
             calendar: fields.cal || '',
+            // The Calendar.app query already matched this event to the
+            // requested window. Recurring series sometimes expose the
+            // master's original start/end dates instead of the occurrence's
+            // dates, so downstream ranking must retain this signal.
+            matchedWindow: true,
         });
     }
-    events.sort((a, b) => {
+    const relevantEvents = events.filter((event) => !isAvailabilityBlock(event));
+    relevantEvents.sort((a, b) => {
         if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
         return (a.start || '').localeCompare(b.start || '');
     });
-    return events;
+    return relevantEvents;
 }
 
 function fetchEvents(window) {
@@ -224,4 +231,4 @@ function formatForPrompt(events) {
     return lines.join('\n');
 }
 
-module.exports = { getMeetingContext, formatForPrompt, startWarming, fetchEventsForWindow };
+module.exports = { getMeetingContext, formatForPrompt, startWarming, fetchEventsForWindow, parseOutput };

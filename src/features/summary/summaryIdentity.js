@@ -29,6 +29,14 @@ function eventActive(event) {
     return !!(event?.isActive || event?.is_active_at_close);
 }
 
+function isAvailabilityBlock(event) {
+    const title = cleanText(event?.title);
+    if (!title) return false;
+    return /\b(?:ooo|pto)\b/i.test(title)
+        || /\bout\s+of\s+office\b/i.test(title)
+        || /\bpaid\s+time\s+off\b/i.test(title);
+}
+
 function overlapMs(event, windowStart, windowEnd) {
     const eventStart = toDate(event?.start);
     const eventEnd = toDate(event?.end);
@@ -59,7 +67,7 @@ function normalizeEvent(event) {
 function selectCalendarEvent(events, recordedFrom, recordedTo) {
     const normalized = (Array.isArray(events) ? events : [])
         .map(normalizeEvent)
-        .filter(Boolean);
+        .filter((event) => event && !isAvailabilityBlock(event));
     if (!normalized.length) return null;
 
     const hasWindow = !!(toDate(recordedFrom) && toDate(recordedTo));
@@ -73,16 +81,18 @@ function selectCalendarEvent(events, recordedFrom, recordedTo) {
                 index,
                 active: eventActive(event) ? 1 : 0,
                 overlap,
+                matchedWindow: event.matchedWindow || event.matched_window ? 1 : 0,
                 hasTimes: eventStart && eventEnd ? 1 : 0,
                 startMs: eventStart ? eventStart.getTime() : Number.MAX_SAFE_INTEGER,
             };
         })
-        .filter((item) => !hasWindow || !item.hasTimes || item.overlap > 0 || item.active);
+        .filter((item) => !hasWindow || !item.hasTimes || item.overlap > 0 || item.active || item.matchedWindow);
 
     if (!scored.length) return null;
     scored.sort((a, b) => {
-        if (a.active !== b.active) return b.active - a.active;
         if (a.overlap !== b.overlap) return b.overlap - a.overlap;
+        if (a.active !== b.active) return b.active - a.active;
+        if (a.matchedWindow !== b.matchedWindow) return b.matchedWindow - a.matchedWindow;
         if (a.hasTimes !== b.hasTimes) return b.hasTimes - a.hasTimes;
         if (a.startMs !== b.startMs) return a.startMs - b.startMs;
         return a.index - b.index;
@@ -90,14 +100,16 @@ function selectCalendarEvent(events, recordedFrom, recordedTo) {
     return scored[0].event;
 }
 
-function buildCalendarKey(event) {
+function buildCalendarKey(event, occurrenceAnchor = '') {
+    const occurrence = occurrenceAnchor
+        ? `matched-window:${toIso(occurrenceAnchor)}`
+        : `${toIso(event.start)}|${toIso(event.end)}`;
     const seed = [
         'calendar',
         cleanText(event.uid),
         cleanText(event.calendar),
         cleanText(event.title),
-        toIso(event.start),
-        toIso(event.end),
+        occurrence,
     ].join('|');
     return `calendar:${hashKey(seed)}`;
 }
@@ -116,9 +128,16 @@ function buildSessionKey({ fallbackBaseName, fallbackTitle, recordedFrom, record
 function buildSummaryIdentity({ events, recordedFrom, recordedTo, fallbackTitle, fallbackBaseName } = {}) {
     const event = selectCalendarEvent(events, recordedFrom, recordedTo);
     if (event) {
+        // Calendar.app may match a recurring occurrence but expose the series
+        // master's original dates. Anchor that case to this recording so a
+        // future occurrence does not overwrite an older meeting's Doc.
+        const matchedWindow = !!(event.matchedWindow || event.matched_window);
+        const occurrenceAnchor = matchedWindow && overlapMs(event, recordedFrom, recordedTo) === 0
+            ? recordedFrom
+            : '';
         return {
             kind: 'calendar',
-            key: buildCalendarKey(event),
+            key: buildCalendarKey(event, occurrenceAnchor),
             title: event.title,
             event,
         };
@@ -136,6 +155,7 @@ function buildSummaryIdentity({ events, recordedFrom, recordedTo, fallbackTitle,
 module.exports = {
     buildSummaryIdentity,
     selectCalendarEvent,
+    isAvailabilityBlock,
     cleanText,
     toIso,
 };

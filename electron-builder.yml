@@ -93,8 +93,14 @@ mac:
         NSDesktopFolderUsageDescription: "Claudely needs to read screenshots and code on your Desktop when you ask repo-aware questions."
         NSDownloadsFolderUsageDescription: "Claudely needs to read files in Downloads when you reference them in questions."
         NSRemovableVolumesUsageDescription: "Claudely needs read access to external volumes when your repos live there."
+    # arm64 only. The universal target never actually worked: npm installs
+    # only host-arch optional deps, so the x64 slice shipped arm64-only
+    # prebuilds (@img/sharp-darwin-arm64, claude-agent-sdk-darwin-arm64,
+    # electron-liquid-glass darwin-arm64) and makeUniversalApp failed on the
+    # byte-identical files; even patched past that, the x64 half would crash
+    # loading those modules on Intel.
     target:
       - target: dmg
-        arch: universal
+        arch: arm64
       - target: zip
-        arch: universal
+        arch: arm64

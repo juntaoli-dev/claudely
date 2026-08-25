@@ -88,6 +88,25 @@ build, or app-behavior change:
 If the e2e test fails, the change is not done — debug and fix, do not return
 to the prompter with "should work" energy.
 
+## Packaged-app refresh on major push (user directive 2026-08-25)
+
+After any major push (a push that changes app behavior: renderer JS,
+main-process JS, Swift in `native/`, IPC contracts, or build config), also
+rebuild and relaunch the installed app, not just the dev shell:
+
+1. `npm run build` (build:all + electron-builder).
+2. Sign with the stable identity, NOT ad-hoc:
+   `codesign --force --deep --sign "Claudely Dev Local" --entitlements entitlements.plist --options runtime dist/mac-arm64/Claudely.app`
+3. Back up `/Applications/Claudely.app` to `/tmp/Claudely.app.before-install.<timestamp>`, replace it with the fresh build, run `lsregister -f` on it (full path in CODEX.md).
+4. Relaunch via `open -a Claudely` and verify boot markers + no orphan helpers.
+
+**Capture guard (non-negotiable):** before killing the running Claudely,
+check `ps` for an active `audio-capture` process or an in-flight summarizer
+`codex exec` child. If either is running, a meeting capture or summary is in
+progress — do NOT kill. Wait for it to finish or tell the user why the
+relaunch is deferred. Docs-only or tooling-only pushes do not require a
+packaged rebuild.
+
 If e2e is genuinely impossible for a given change (example: a CI-only file
 the user agrees doesn't need a runtime check), say so explicitly in the same
 turn instead of silently skipping.

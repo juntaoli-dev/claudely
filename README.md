@@ -70,11 +70,15 @@ DEEPGRAM_API_KEY=... npm start
 
 ```bash
 npm run package
-codesign --force --deep --sign - --entitlements entitlements.plist --options runtime dist/mac-arm64/Claudely.app
+codesign --force --deep --sign "Claudely Dev Local" --entitlements entitlements.plist --options runtime dist/mac-arm64/Claudely.app
 cp -R dist/mac-arm64/Claudely.app /Applications/
 ```
 
-For persistent TCC grants across rebuilds, sign with a stable identity. See `docs/E2E.md` for the full runbook.
+Signing with the self-signed "Claudely Dev Local" keychain identity (instead of
+ad-hoc `-`) keeps the signature stable across rebuilds, so macOS TCC grants
+(mic, screen recording, Automation) persist. The dev-shell Electron is kept
+signed the same way by `scripts/sign-dev-electron.sh`, which runs on
+`npm install` (postinstall). See `docs/E2E.md` for the full runbook.
 
 ## Config
 

@@ -98,6 +98,18 @@ class FireDispatcher {
             isFirstAsk = false;
         }
 
+        // Snapshot BEFORE computing tails: a line appended between the
+        // snapshot and since() gets re-sent next ask (harmless duplicate)
+        // instead of silently lost.
+        let tailUpTo = null;
+        try { tailUpTo = this.store?.latestTs?.() ?? null; } catch (_) {}
+
+        // transcriptFull: the whole in-memory window, for providers that
+        // cannot resume a prior conversation (Codex). Delta mode assumed the
+        // provider remembers what it was already sent, which only holds for
+        // Claude resume; a Codex ask after a Claude ask used to receive just
+        // the delta and no memory, i.e. effectively no transcript.
+        let transcriptFull;
         if (transcriptTail === undefined) {
             try {
                 if (claudeCtx && this.store?.since) {
@@ -105,6 +117,7 @@ class FireDispatcher {
                     // already seen. On first ask lastTranscriptSentTs is null,
                     // so since(0) returns the whole in-memory window.
                     transcriptTail = this.store.since(claudeCtx.lastTranscriptSentTs || 0) || '';
+                    transcriptFull = this.store.since(0) || '';
                 } else {
                     transcriptTail = this.store?.tail({ now: line.ts || Date.now(), seconds: 30 }) || '';
                 }
@@ -120,7 +133,10 @@ class FireDispatcher {
                 const { getMeetingContext, formatForPrompt } = require('../calendar/calendarContext');
                 const events = await getMeetingContext();
                 const ctx = formatForPrompt(events);
-                if (ctx) transcriptTail = `${ctx}\n\n${transcriptTail || ''}`.trim();
+                if (ctx) {
+                    transcriptTail = `${ctx}\n\n${transcriptTail || ''}`.trim();
+                    if (transcriptFull !== undefined) transcriptFull = `${ctx}\n\n${transcriptFull || ''}`.trim();
+                }
             } catch (_) { /* calendar is optional context */ }
         }
         // Persist the question + assistant reply to ai_messages so the
@@ -144,6 +160,7 @@ class FireDispatcher {
             const result = await this.assistant.ask({
                 question,
                 transcriptTail,
+                transcriptFull,
                 imagePath,
                 resumeSessionId,
                 isFirstAsk,
@@ -170,7 +187,10 @@ class FireDispatcher {
                 try {
                     this.claudeContextProvider.set({
                         claudeSessionId: result.sessionId,
-                        lastTranscriptSentTs: Date.now(),
+                        // Newest line included in this ask's tail. Falls back
+                        // to the previous cutoff when the window was empty so
+                        // an empty ask never advances the cursor.
+                        lastTranscriptSentTs: tailUpTo ?? claudeCtx?.lastTranscriptSentTs ?? Date.now(),
                     });
                 } catch (e) {
                     console.warn('[FireDispatcher] could not persist Claude resume context:', e.message);

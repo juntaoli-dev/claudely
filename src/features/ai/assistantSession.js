@@ -23,12 +23,21 @@ class AssistantSession {
         this.claude = claudeSession || new ClaudeSession({ cwd, model: claudeModel || null });
     }
 
-    async ask({ question, transcriptTail, imagePath, onDelta, onEvent, resumeSessionId = null, isFirstAsk = true }) {
+    async ask({ question, transcriptTail, transcriptFull, imagePath, onDelta, onEvent, resumeSessionId = null, isFirstAsk = true }) {
         const errors = [];
 
         if (this.prefer !== 'claude') {
             try {
-                return await this.codex.ask({ question, transcriptTail, imagePath, onDelta, onEvent });
+                // Codex cannot resume a prior conversation, so delta-mode
+                // transcripts (computed against what CLAUDE already saw) are
+                // meaningless to it. Send the full window when available.
+                return await this.codex.ask({
+                    question,
+                    transcriptTail: transcriptFull != null ? transcriptFull : transcriptTail,
+                    imagePath,
+                    onDelta,
+                    onEvent,
+                });
             } catch (error) {
                 errors.push(`Codex: ${error.message}`);
                 onEvent?.({

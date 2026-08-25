@@ -48,6 +48,15 @@ class TranscriptStore {
             .join('\n');
     }
 
+    // Epoch-ms timestamp of the newest line in the window, or null when
+    // empty. FireDispatcher snapshots this at fire time so
+    // lastTranscriptSentTs reflects what was actually sent, not when the
+    // answer finished streaming (lines spoken during a slow answer used to
+    // fall into that gap and never reach the assistant).
+    latestTs() {
+        return this.lines.length ? this.lines[this.lines.length - 1].ts : null;
+    }
+
     all() { return [...this.lines]; }
 
     close() {

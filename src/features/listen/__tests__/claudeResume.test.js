@@ -78,6 +78,88 @@ describe('Claude resume context flow', () => {
         expect(askCalls[1].transcriptTail).not.toContain('agenda overview');
     });
 
+    it('delta mode also carries transcriptFull so non-resuming providers see the whole window', async () => {
+        const store = new TranscriptStore({ maxMinutes: 60 });
+        const baseTs = Date.now() - 10_000;
+        store.append({ ts: baseTs, speaker: 'them', text: 'kickoff intro' });
+
+        // Simulate: a Claude ask already happened and advanced the cursor.
+        const cell = { claudeSessionId: 'claude-sess-A1', lastTranscriptSentTs: baseTs };
+        const provider = {
+            get: () => ({ ...cell }),
+            set: (ctx) => { cell.claudeSessionId = ctx.claudeSessionId; cell.lastTranscriptSentTs = ctx.lastTranscriptSentTs; },
+        };
+        store.append({ ts: baseTs + 1000, speaker: 'me', text: 'follow-up decision item' });
+
+        const askCalls = [];
+        const claude = { ask: vi.fn(async (args) => { askCalls.push({ ...args }); return { sessionId: 'claude-sess-A1' }; }) };
+
+        const d = new FireDispatcher({
+            store, classifier: null, grabber: { grab: async () => null }, claude,
+            config: { get: () => null },
+            onState: () => {},
+            claudeContextProvider: provider,
+        });
+
+        await d.manualFire({ question: 'q' });
+        for (let i = 0; i < 200 && askCalls.length < 1; i++) {
+            await new Promise((r) => setImmediate(r));
+        }
+
+        expect(askCalls).toHaveLength(1);
+        // Delta excludes the already-seen line, full window includes it.
+        expect(askCalls[0].transcriptTail).toContain('follow-up decision item');
+        expect(askCalls[0].transcriptTail).not.toContain('kickoff intro');
+        expect(askCalls[0].transcriptFull).toContain('kickoff intro');
+        expect(askCalls[0].transcriptFull).toContain('follow-up decision item');
+    });
+
+    it('advances lastTranscriptSentTs to the newest line at fire time, not answer completion', async () => {
+        const store = new TranscriptStore({ maxMinutes: 60 });
+        const baseTs = Date.now() - 10_000;
+        store.append({ ts: baseTs, speaker: 'them', text: 'kickoff intro' });
+
+        const cell = { claudeSessionId: null, lastTranscriptSentTs: null };
+        const provider = {
+            get: () => ({ ...cell }),
+            set: (ctx) => { cell.claudeSessionId = ctx.claudeSessionId; cell.lastTranscriptSentTs = ctx.lastTranscriptSentTs; },
+        };
+
+        const askCalls = [];
+        // Slow answer: a line lands while the assistant is still streaming.
+        const claude = {
+            ask: vi.fn(async (args) => {
+                askCalls.push({ ...args });
+                store.append({ ts: Date.now(), speaker: 'them', text: 'spoken during answer' });
+                return { sessionId: 'claude-sess-A1' };
+            }),
+        };
+
+        const d = new FireDispatcher({
+            store, classifier: null, grabber: { grab: async () => null }, claude,
+            config: { get: () => null },
+            onState: () => {},
+            claudeContextProvider: provider,
+        });
+
+        await d.manualFire({ question: 'q1' });
+        for (let i = 0; i < 200 && (askCalls.length < 1 || !cell.claudeSessionId); i++) {
+            await new Promise((r) => setImmediate(r));
+        }
+
+        // Cursor points at the newest line included in the tail (baseTs), so
+        // the line spoken during the answer is still ahead of the cursor.
+        expect(cell.lastTranscriptSentTs).toBe(baseTs);
+
+        await d.manualFire({ question: 'q2' });
+        for (let i = 0; i < 200 && askCalls.length < 2; i++) {
+            await new Promise((r) => setImmediate(r));
+        }
+
+        // The mid-answer line reaches the next ask instead of being lost.
+        expect(askCalls[1].transcriptTail).toContain('spoken during answer');
+    });
+
     it('falls back to 30s tail when no claude context provider is wired (e.g. manual ask outside Listen)', async () => {
         const store = new TranscriptStore({ maxMinutes: 60 });
         const now = Date.now();

@@ -10,6 +10,14 @@ describe('TranscriptStore', () => {
     expect(tail).toBe('B: new');
   });
 
+  it('latestTs() returns the newest line ts, null when empty', () => {
+    const store = new TranscriptStore({ maxMinutes: 60 });
+    expect(store.latestTs()).toBeNull();
+    store.append({ text: 'a', speaker: 'A', ts: 1000 });
+    store.append({ text: 'b', speaker: 'B', ts: 2000 });
+    expect(store.latestTs()).toBe(2000);
+  });
+
   it('drops oldest when over maxMinutes', () => {
     const store = new TranscriptStore({ maxMinutes: 1 });
     store.append({ text: 'old', speaker: 'A', ts: 0 });

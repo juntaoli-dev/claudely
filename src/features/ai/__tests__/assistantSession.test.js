@@ -18,6 +18,41 @@ describe('AssistantSession', () => {
         expect(claudeSession.ask).not.toHaveBeenCalled();
     });
 
+    it('sends the full transcript window to Codex, the delta to Claude', async () => {
+        const codexSession = { ask: vi.fn(async ({ onDelta }) => onDelta('codex answer')) };
+        const claudeSession = { ask: vi.fn(async () => {}) };
+        const session = new AssistantSession({ codexSession, claudeSession });
+
+        await session.ask({
+            question: 'q',
+            transcriptTail: 'me: delta line only',
+            transcriptFull: 'them: kickoff intro\nme: delta line only',
+            resumeSessionId: 'claude-sess-A1',
+            onDelta: () => {},
+        });
+
+        // Codex cannot resume, so it must get the whole window.
+        expect(codexSession.ask.mock.calls[0][0].transcriptTail).toBe('them: kickoff intro\nme: delta line only');
+        expect(claudeSession.ask).not.toHaveBeenCalled();
+    });
+
+    it('keeps the delta transcript for the Claude fallback', async () => {
+        const codexSession = { ask: vi.fn(async () => { throw new Error('missing binary'); }) };
+        const claudeSession = { ask: vi.fn(async ({ onDelta }) => onDelta('claude answer')) };
+        const session = new AssistantSession({ codexSession, claudeSession });
+
+        await session.ask({
+            question: 'q',
+            transcriptTail: 'me: delta line only',
+            transcriptFull: 'them: kickoff intro\nme: delta line only',
+            resumeSessionId: 'claude-sess-A1',
+            onDelta: () => {},
+        });
+
+        expect(claudeSession.ask.mock.calls[0][0].transcriptTail).toBe('me: delta line only');
+        expect(claudeSession.ask.mock.calls[0][0].resumeSessionId).toBe('claude-sess-A1');
+    });
+
     it('falls back to Claude when Codex fails', async () => {
         const codexSession = { ask: vi.fn(async () => { throw new Error('missing binary'); }) };
         const claudeSession = { ask: vi.fn(async ({ onDelta, onEvent }) => {
